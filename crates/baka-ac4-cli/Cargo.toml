@@ -1,0 +1,24 @@
+[package]
+name = "baka-ac4-cli"
+description = "AC-4 decoding command line tool"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["ac4", "audio", "decoder", "wav"]
+categories = ["command-line-utilities", "multimedia::audio"]
+include = ["src/**", "tests/**", "Cargo.toml", "README.md", "LICENSE", "NOTICE"]
+
+[lib]
+name = "baka_ac4_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "baka-ac4"
+path = "src/main.rs"
+
+[dependencies]
+baka-ac4-core = { version = "0.1.0", path = "../baka-ac4-core" }
