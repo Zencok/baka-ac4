@@ -12,6 +12,28 @@ use baka_ac4_core::StreamFeatures;
 use std::collections::BTreeMap;
 
 fn main() -> ExitCode {
+    // Decoder history and DSP scratch can exceed Windows' default main stack,
+    // especially in debug builds. Keep the command on an explicitly sized stack.
+    match std::thread::Builder::new()
+        .name("baka-ac4".into())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(run)
+    {
+        Ok(worker) => match worker.join() {
+            Ok(code) => code,
+            Err(_) => {
+                eprintln!("error: decoder worker failed");
+                ExitCode::FAILURE
+            }
+        },
+        Err(_) => {
+            eprintln!("error: cannot start decoder worker");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("toc") if args.len() == 3 => toc(&args[2]),
