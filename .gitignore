@@ -1,5 +1,6 @@
 /target
 /mutants
+/test-samples/
 Cargo.lock.bak
 __pycache__/
 *.pyc

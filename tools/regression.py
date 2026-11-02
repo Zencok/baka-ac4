@@ -14,7 +14,7 @@ tools/baselines.json from the current outputs. Float output is deterministic
 on the same build/CPU class; treat cross-machine md5 mismatches with
 `--update-baselines` after eyeballing the SNR column.
 
-Sample locations default to <repo>/../test-samples (gitignored); override
+Sample locations default to <repo>/test-samples (gitignored); override
 with --samples-dir. Missing samples are reported as SKIP, not failure.
 
 usage: python tools/regression.py [--update-baselines] [--samples-dir DIR]
@@ -73,7 +73,7 @@ def sh_failure(name, res):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--update-baselines", action="store_true")
-    ap.add_argument("--samples-dir", default=os.path.join(REPO, "..", "test-samples"))
+    ap.add_argument("--samples-dir", default=os.path.join(REPO, "test-samples"))
     ap.add_argument("--skip-fuzz", action="store_true")
     ap.add_argument("--fuzz-iters", type=int, default=None)
     args = ap.parse_args()
