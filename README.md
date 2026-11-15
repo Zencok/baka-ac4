@@ -19,6 +19,8 @@
 - **Playback integration** — embed the core in your existing audio pipeline.
 - **Practical CLI** — decode to WAV, inspect stream metadata and benchmark decoding.
 
+Requires Rust **1.100.0**, pinned by `rust-toolchain.toml`.
+
 ## Quick start
 
 Install the CLI with Rust and Cargo:

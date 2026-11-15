@@ -2,11 +2,7 @@ use std::process::Command;
 
 fn bench(rounds: &str) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_baka-ac4"))
-        .args([
-            "bench",
-            "tests/fixtures/p83_iframe_plus5.ac4",
-            rounds,
-        ])
+        .args(["bench", "tests/fixtures/p83_iframe_plus5.ac4", rounds])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .unwrap()

@@ -567,16 +567,26 @@ struct SharedTables {
 fn shared_tables() -> &'static SharedTables {
     static TABLES: std::sync::OnceLock<SharedTables> = std::sync::OnceLock::new();
     TABLES.get_or_init(|| {
-        let kbd_window = std::array::from_fn(|j| std::array::from_fn(|i| {
-            let mut window = Box::new([0.0f32; 2048]);
-            kbd_window_init(&mut window[..], KBD_WINDOW_ALPHA[j][i], TRANSF_LENGTH_48KHZ[j][i] as usize);
-            window
-        }));
+        let kbd_window = std::array::from_fn(|j| {
+            std::array::from_fn(|i| {
+                let mut window = Box::new([0.0f32; 2048]);
+                kbd_window_init(
+                    &mut window[..],
+                    KBD_WINDOW_ALPHA[j][i],
+                    TRANSF_LENGTH_48KHZ[j][i] as usize,
+                );
+                window
+            })
+        });
         let mut quant_lut = Box::new([0.0f32; 8192]);
         for (i, q) in quant_lut.iter_mut().enumerate() {
             *q = (i as f32).powf(4.0f32 / 3.0);
         }
-        SharedTables { vlcs: init_vlcs(), kbd_window, quant_lut }
+        SharedTables {
+            vlcs: init_vlcs(),
+            kbd_window,
+            quant_lut,
+        }
     })
 }
 
@@ -987,10 +997,12 @@ impl Ac4Decoder {
     pub fn new() -> Result<Ac4Decoder> {
         let shared = shared_tables();
         let mut planner = rustfft::FftPlanner::new();
-        let tx = std::array::from_fn(|j| std::array::from_fn(|i| {
-            let len = TRANSF_LENGTH_48KHZ[j][i] as usize;
-            Imdct::with_planner(len, -1.0 / len as f32, &mut planner)
-        }));
+        let tx = std::array::from_fn(|j| {
+            std::array::from_fn(|i| {
+                let len = TRANSF_LENGTH_48KHZ[j][i] as usize;
+                Imdct::with_planner(len, -1.0 / len as f32, &mut planner)
+            })
+        });
 
         Ok(Ac4Decoder {
             qmf_bypass: false,
@@ -3076,11 +3088,10 @@ impl Ac4Decoder {
                         for tsg in 0..ssch.aspx_num_rel_right {
                             // i32 math then truncate: matches C's uint8_t
                             // assignment of an int expression (wraps)
-                            ssch.atsg_sig[(num_atsg_sig - tsg - 1) as usize] = (ssch.atsg_sig
-                                [(num_atsg_sig - tsg) as usize]
-                                as i32
-                                - ssch.aspx_rel_bord_right[tsg as usize])
-                                as u8;
+                            ssch.atsg_sig[(num_atsg_sig - tsg - 1) as usize] =
+                                (ssch.atsg_sig[(num_atsg_sig - tsg) as usize] as i32
+                                    - ssch.aspx_rel_bord_right[tsg as usize])
+                                    as u8;
                         }
                     }
                     c if c == enums::VARFIX => {
@@ -3091,8 +3102,7 @@ impl Ac4Decoder {
                         }
                         ssch.atsg_sig[num_atsg_sig as usize] = num_aspx_timeslots as u8;
                         for tsg in 0..ssch.aspx_num_rel_left {
-                            ssch.atsg_sig[(tsg + 1) as usize] = (ssch.atsg_sig[tsg as usize]
-                                as i32
+                            ssch.atsg_sig[(tsg + 1) as usize] = (ssch.atsg_sig[tsg as usize] as i32
                                 + ssch.aspx_rel_bord_left[tsg as usize])
                                 as u8;
                         }
@@ -3106,19 +3116,17 @@ impl Ac4Decoder {
                         ssch.atsg_sig[num_atsg_sig as usize] =
                             (ssch.aspx_var_bord_right + num_aspx_timeslots) as u8;
                         for tsg in 0..ssch.aspx_num_rel_left {
-                            ssch.atsg_sig[(tsg + 1) as usize] = (ssch.atsg_sig[tsg as usize]
-                                as i32
+                            ssch.atsg_sig[(tsg + 1) as usize] = (ssch.atsg_sig[tsg as usize] as i32
                                 + ssch.aspx_rel_bord_left[tsg as usize])
                                 as u8;
                         }
                         for tsg in 0..ssch.aspx_num_rel_right {
                             // i32 math then truncate: matches C's uint8_t
                             // assignment of an int expression (wraps)
-                            ssch.atsg_sig[(num_atsg_sig - tsg - 1) as usize] = (ssch.atsg_sig
-                                [(num_atsg_sig - tsg) as usize]
-                                as i32
-                                - ssch.aspx_rel_bord_right[tsg as usize])
-                                as u8;
+                            ssch.atsg_sig[(num_atsg_sig - tsg - 1) as usize] =
+                                (ssch.atsg_sig[(num_atsg_sig - tsg) as usize] as i32
+                                    - ssch.aspx_rel_bord_right[tsg as usize])
+                                    as u8;
                         }
                     }
                     _ => panic!("aspx_atsg: invalid int class"),
@@ -3555,8 +3563,7 @@ impl Ac4Decoder {
 
         {
             let ssch = &mut self.st.substream.ssch[ch];
-            let num_sbg_sig_highres =
-                ssch.num_sbg_master - ssch.aspx_xover_subband_offset;
+            let num_sbg_sig_highres = ssch.num_sbg_master - ssch.aspx_xover_subband_offset;
             if num_sbg_sig_highres < 0 {
                 // crossover past the last master group: C would index
                 // sbg_sig_highres negatively below (UB). Validate before
@@ -3670,8 +3677,7 @@ impl Ac4Decoder {
                 let ssch = &mut self.st.substream.ssch[ch];
                 // clamp: corrupt streams can grow the patch count past the
                 // MAX_SBG_NOISE-sized tables (C would index [5], one past)
-                let pi = (ssch.num_sbg_patches as usize)
-                    .min(ssch.sbg_patch_num_sb.len() - 1);
+                let pi = (ssch.num_sbg_patches as usize).min(ssch.sbg_patch_num_sb.len() - 1);
                 ssch.sbg_patch_num_sb[pi] = (sb - usb).max(0);
                 ssch.sbg_patch_start_sb[pi] = sba - odd - (sb - usb).max(0);
                 if ssch.sbg_patch_num_sb[pi] > 0 {
@@ -3698,8 +3704,8 @@ impl Ac4Decoder {
             // min(): the patch cursor can exceed the table on corrupt
             // streams before the "too many patches" check below runs
             if ssch.num_sbg_patches > 1
-                && ssch.sbg_patch_num_sb[(ssch.num_sbg_patches as usize - 1)
-                    .min(ssch.sbg_patch_num_sb.len() - 1)]
+                && ssch.sbg_patch_num_sb
+                    [(ssch.num_sbg_patches as usize - 1).min(ssch.sbg_patch_num_sb.len() - 1)]
                     < 3
             {
                 ssch.num_sbg_patches -= 1;
@@ -3712,7 +3718,10 @@ impl Ac4Decoder {
             ssch.sbg_patches[0] = ssch.sbx;
             // C's loop writes sbg_patches[num] with num == 5, one past the
             // MAX_SBG_NOISE-sized table (off-by-one); clamp to the table.
-            for i in 1..=ssch.num_sbg_patches.min((ssch.sbg_patches.len() - 1) as i32) {
+            for i in 1..=ssch
+                .num_sbg_patches
+                .min((ssch.sbg_patches.len() - 1) as i32)
+            {
                 ssch.sbg_patches[i as usize] =
                     ssch.sbg_patches[i as usize - 1] + ssch.sbg_patch_num_sb[i as usize - 1];
             }
@@ -4806,8 +4815,7 @@ impl Ac4Decoder {
                         // corrupt streams can push dst/k past the buffers;
                         // C would index out of bounds (UB). The masks keep
                         // this branch-free on the hot path.
-                        ssch.spec_reord[dst & 2047] =
-                            ssch.scaled_spec[k & 2047];
+                        ssch.spec_reord[dst & 2047] = ssch.scaled_spec[k & 2047];
                         k += 1;
                     }
                 }
@@ -5014,8 +5022,7 @@ impl Ac4Decoder {
                     acc[j] += qs[j] * ws[j];
                 }
             }
-            pcm_out[ts * MAX_QMF_BANDS..ts * MAX_QMF_BANDS + MAX_QMF_BANDS]
-                .copy_from_slice(&acc);
+            pcm_out[ts * MAX_QMF_BANDS..ts * MAX_QMF_BANDS + MAX_QMF_BANDS].copy_from_slice(&acc);
         }
     }
 
@@ -5591,10 +5598,10 @@ impl Ac4Decoder {
                     // Current low QMF Subband (clamped: corrupt streams can
                     // push both the patch origin and the high-band target
                     // outside the QMF buffers; C would index out of bounds)
-                    let p = (ssch.sbg_patch_start_sb[i] + sb)
-                        .clamp(0, MAX_QMF_BANDS as i32 - 1) as usize;
-                    let sb_high = (ssch.sbx + sum_sb_patches + sb)
-                        .clamp(0, MAX_QMF_BANDS as i32 - 1);
+                    let p = (ssch.sbg_patch_start_sb[i] + sb).clamp(0, MAX_QMF_BANDS as i32 - 1)
+                        as usize;
+                    let sb_high =
+                        (ssch.sbx + sum_sb_patches + sb).clamp(0, MAX_QMF_BANDS as i32 - 1);
 
                     let (re, im) = (
                         ssch.q_low_ext[0][n as usize][p],
@@ -5681,8 +5688,7 @@ impl Ac4Decoder {
 
                 // i32 difference: C subtracts uint8_t values in int domain,
                 // so a corrupt stream can produce a negative count here
-                let env_len =
-                    (ssch.atsg_sig[atsg + 1] as i32 - ssch.atsg_sig[atsg] as i32) as f32;
+                let env_len = (ssch.atsg_sig[atsg + 1] as i32 - ssch.atsg_sig[atsg] as i32) as f32;
                 if self.st.substream.aspx_interpolation == 0 {
                     let lo = ssch.sbg_sig[ssch.atsg_freqres[atsg] as usize][sbg];
                     let hi = ssch.sbg_sig[ssch.atsg_freqres[atsg] as usize][sbg + 1];
@@ -5719,7 +5725,11 @@ impl Ac4Decoder {
 
             // cap the walk: corrupt streams can keep matching past the
             // noise-envelope table (C would index past it)
-            let next_noise = ssch.atsg_noise.get(atsg_noise + 1).copied().unwrap_or(u8::MAX);
+            let next_noise = ssch
+                .atsg_noise
+                .get(atsg_noise + 1)
+                .copied()
+                .unwrap_or(u8::MAX);
             if atsg_noise + 1 < ssch.scf_noise_sbg.len() && ssch.atsg_sig[atsg] == next_noise {
                 atsg_noise += 1;
             }
@@ -5730,8 +5740,7 @@ impl Ac4Decoder {
             // than the boundary table holds)
             for sbg in 0..(ssch.num_sbg_noise as usize).min(ssch.sbg_noise.len() - 1) {
                 let lo = (ssch.sbg_noise[sbg] - ssch.sbx).clamp(0, MAX_QMF_BANDS as i32);
-                let hi = (ssch.sbg_noise.get(sbg + 1).copied().unwrap_or(i32::MAX)
-                    - ssch.sbx)
+                let hi = (ssch.sbg_noise.get(sbg + 1).copied().unwrap_or(i32::MAX) - ssch.sbx)
                     .clamp(0, MAX_QMF_BANDS as i32);
                 for sb in lo..hi {
                     ssch.scf_noise_sb[atsg][sb as usize] = ssch.scf_noise_sbg[atsg_noise][sbg];
@@ -5848,9 +5857,7 @@ impl Ac4Decoder {
                 let mut denom = epsilon0;
                 let mut nom = 0.0f32;
                 let lo = (ssch.sbg_lim[sbg] - ssch.sbx).clamp(0, MAX_QMF_BANDS as i32);
-                let hi = (ssch.sbg_lim.get(sbg + 1).copied().unwrap_or(i32::MAX)
-                    - 1
-                    - ssch.sbx)
+                let hi = (ssch.sbg_lim.get(sbg + 1).copied().unwrap_or(i32::MAX) - 1 - ssch.sbx)
                     .clamp(0, MAX_QMF_BANDS as i32);
                 for sb in lo..hi {
                     nom += ssch.scf_sig_sb[atsg][sb as usize];
@@ -5898,9 +5905,7 @@ impl Ac4Decoder {
                 let mut denom = epsilon0;
                 let mut nom = 0.0f32;
                 let lo = (ssch.sbg_lim[sbg] - ssch.sbx).clamp(0, MAX_QMF_BANDS as i32);
-                let hi = (ssch.sbg_lim.get(sbg + 1).copied().unwrap_or(i32::MAX)
-                    - 1
-                    - ssch.sbx)
+                let hi = (ssch.sbg_lim.get(sbg + 1).copied().unwrap_or(i32::MAX) - 1 - ssch.sbx)
                     .clamp(0, MAX_QMF_BANDS as i32);
                 for sb in lo..hi {
                     nom += ssch.scf_sig_sb[atsg][sb as usize];
@@ -5958,12 +5963,8 @@ impl Ac4Decoder {
         let mut atsg = 0usize;
         for ts in ts0..ts1 {
             // get()+cap: see generate_tones
-            let next_bord = ssch
-                .atsg_sig
-                .get(atsg + 1)
-                .copied()
-                .unwrap_or(u8::MAX) as i32
-                * num_ts_in_ats;
+            let next_bord =
+                ssch.atsg_sig.get(atsg + 1).copied().unwrap_or(u8::MAX) as i32 * num_ts_in_ats;
             if ts == next_bord {
                 atsg += 1;
             }
@@ -5993,12 +5994,8 @@ impl Ac4Decoder {
         for ts in ts0..ts1 {
             // get()+cap: corrupt streams can keep matching boundaries and
             // walk atsg past the signal table (C would index out of bounds)
-            let next_bord = ssch
-                .atsg_sig
-                .get(atsg + 1)
-                .copied()
-                .unwrap_or(u8::MAX) as i32
-                * num_ts_in_ats;
+            let next_bord =
+                ssch.atsg_sig.get(atsg + 1).copied().unwrap_or(u8::MAX) as i32 * num_ts_in_ats;
             if ts == next_bord {
                 atsg += 1;
             }
@@ -6044,17 +6041,12 @@ impl Ac4Decoder {
         }
 
         // Loop over QMF time slots
-        let ts1 = (ssch.atsg_sig[ssch.num_atsg_sig as usize] as i32 * num_ts_in_ats)
-            .clamp(ts0, ts_max);
+        let ts1 =
+            (ssch.atsg_sig[ssch.num_atsg_sig as usize] as i32 * num_ts_in_ats).clamp(ts0, ts_max);
         let mut atsg = 0usize;
         for ts in ts0..ts1 {
-            let next_bord = ssch
-                .atsg_sig
-                .get(atsg + 1)
-                .copied()
-                .unwrap_or(u8::MAX)
-                as i32
-                * num_ts_in_ats;
+            let next_bord =
+                ssch.atsg_sig.get(atsg + 1).copied().unwrap_or(u8::MAX) as i32 * num_ts_in_ats;
             if ts == next_bord {
                 atsg += 1;
             }
@@ -6524,7 +6516,6 @@ impl Ac4Decoder {
         self.st.have_iframe = 0;
         self.st.sequence_counter_prev = 0;
     }
-
 }
 
 /// `get_max_sfb()` as a free function so it can be called while an

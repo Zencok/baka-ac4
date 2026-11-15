@@ -18,7 +18,10 @@ pub fn read_ac4_frames(data: &[u8]) -> Result<Track, String> {
             if samples.is_empty() {
                 return Err(format!("no AC-4 syncword found (got {:#04x})", data[0]));
             }
-            eprintln!("warning: {trailing} trailing bytes after {} frames", samples.len());
+            eprintln!(
+                "warning: {trailing} trailing bytes after {} frames",
+                samples.len()
+            );
             break;
         }
         let mut total = u16::from_be_bytes([data[off + 2], data[off + 3]]) as usize + 4;
@@ -36,9 +39,7 @@ pub fn read_ac4_frames(data: &[u8]) -> Result<Track, String> {
         }
         if off + total > data.len() {
             let trailing = data.len() - off;
-            eprintln!(
-                "warning: truncated final frame ({trailing} of {total} bytes); dropped"
-            );
+            eprintln!("warning: truncated final frame ({trailing} of {total} bytes); dropped");
             break;
         }
         samples.push((off as u64, total as u32));
