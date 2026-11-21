@@ -12,6 +12,7 @@ baka-ac4 bench input.mp4 10
 ```
 
 - Input: MP4/M4A containing an AC-4 track, or a raw `.ac4` stream.
+  Truncated sample payloads and inconsistent tables are rejected before decoding.
 - Output: 16-bit PCM WAV by default; `--f32` selects float32 WAV.
 - `toc` emits frame metadata and coding-tool statistics as JSON.
 - `bench` reports minimum and median decoding time. The optional round count defaults to 10 and accepts `1..=10000`.

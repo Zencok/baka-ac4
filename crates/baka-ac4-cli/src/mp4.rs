@@ -54,13 +54,20 @@ where
             Some(n) => n,
             None => break,
         };
-        let hdr = if size == 1 { 16 } else { 8 };
+        let (size, hdr) = if size == 1 {
+            let Some(extended) = r.u64(o + 8).and_then(|n| usize::try_from(n).ok()) else {
+                break;
+            };
+            (extended, 16)
+        } else {
+            (size, 8)
+        };
         if size == 0 {
             // box extends to the end of the enclosing box/file
             f(r, &name, o + hdr, end);
             break;
         }
-        if o + size > end {
+        if size < hdr || size > end - o {
             break;
         }
         f(r, &name, o + hdr, o + size);
@@ -116,12 +123,18 @@ pub fn read_ac4_track(data: &[u8]) -> Result<Track, String> {
             }
 
             let mut sizes: Vec<u32> = Vec::new();
-            for (b, _e) in find_boxes(&r, stbl_s, stbl_e, "stsz").iter() {
+            for (b, e) in find_boxes(&r, stbl_s, stbl_e, "stsz").iter() {
                 let sample_size = r.u32(*b + 4).unwrap_or(0);
                 let count = r.u32(*b + 8).unwrap_or(0) as usize;
+                if e - b < 12 || count > data.len() {
+                    return Err("invalid stsz sample count".into());
+                }
                 if sample_size != 0 {
                     sizes = vec![sample_size; count];
                 } else {
+                    if count > (e - b - 12) / 4 {
+                        return Err("truncated stsz table".into());
+                    }
                     sizes.reserve(count);
                     for i in 0..count {
                         sizes.push(r.u32(*b + 12 + i * 4).unwrap_or(0));
@@ -130,8 +143,11 @@ pub fn read_ac4_track(data: &[u8]) -> Result<Track, String> {
             }
 
             let mut stsc: Vec<(u32, u32)> = Vec::new(); // (first_chunk, samples_per_chunk)
-            for (b, _e) in find_boxes(&r, stbl_s, stbl_e, "stsc").iter() {
+            for (b, e) in find_boxes(&r, stbl_s, stbl_e, "stsc").iter() {
                 let count = r.u32(*b + 4).unwrap_or(0) as usize;
+                if e - b < 8 || count > (e - b - 8) / 12 {
+                    return Err("truncated stsc table".into());
+                }
                 for i in 0..count {
                     let o = *b + 8 + i * 12;
                     stsc.push((r.u32(o).unwrap_or(0), r.u32(o + 4).unwrap_or(0)));
@@ -140,15 +156,21 @@ pub fn read_ac4_track(data: &[u8]) -> Result<Track, String> {
 
             let mut chunk_offsets: Vec<u64> = Vec::new();
             if !find_boxes(&r, stbl_s, stbl_e, "stco").is_empty() {
-                for (b, _) in find_boxes(&r, stbl_s, stbl_e, "stco") {
+                for (b, e) in find_boxes(&r, stbl_s, stbl_e, "stco") {
                     let count = r.u32(b + 4).unwrap_or(0) as usize;
+                    if e - b < 8 || count > (e - b - 8) / 4 {
+                        return Err("truncated stco table".into());
+                    }
                     for i in 0..count {
                         chunk_offsets.push(r.u32(b + 8 + i * 4).unwrap_or(0) as u64);
                     }
                 }
             }
-            for (b, _) in find_boxes(&r, stbl_s, stbl_e, "co64") {
+            for (b, e) in find_boxes(&r, stbl_s, stbl_e, "co64") {
                 let count = r.u32(b + 4).unwrap_or(0) as usize;
+                if e - b < 8 || count > (e - b - 8) / 8 {
+                    return Err("truncated co64 table".into());
+                }
                 for i in 0..count {
                     chunk_offsets.push(r.u64(b + 8 + i * 8).unwrap_or(0));
                 }
@@ -177,17 +199,28 @@ pub fn read_ac4_track(data: &[u8]) -> Result<Track, String> {
                         break;
                     }
                     let sz = sizes[si];
+                    let end = off
+                        .checked_add(sz as u64)
+                        .filter(|&end| end <= data.len() as u64)
+                        .ok_or_else(|| "sample extends beyond MP4 input".to_string())?;
+                    if sz == 0 {
+                        return Err("empty MP4 sample".into());
+                    }
                     samples.push((off, sz));
-                    off += sz as u64;
+                    off = end;
                     si += 1;
                 }
+            }
+
+            if samples.is_empty() || si != sizes.len() {
+                return Err("incomplete MP4 sample mapping".into());
             }
 
             let mut timescale = 0u32;
             let mut duration_units = 0u64;
             // mdhd sits beside minf: find the trak that contains this stbl.
             for (trak_s, trak_e) in find_boxes(&r, *moov_s, *moov_e, "trak") {
-                if trak_s < stbl_s && stbl_e < trak_e {
+                if trak_s <= stbl_s && stbl_e <= trak_e {
                     for (b, _) in find_boxes(&r, trak_s, trak_e, "mdia/mdhd") {
                         let version = r.d.get(b).copied().unwrap_or(0);
                         if version == 1 {

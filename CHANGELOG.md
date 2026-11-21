@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Reject truncated MP4 sample payloads, incomplete sample mappings and oversized
+  table counts before decoding; CLI commands report an error instead of panicking.
+- Handle extended-size MP4 boxes and correctly recover track timescale/duration.
+
 ## 0.1.0
 
 - Initial Rust AC-4 decoder and file-conversion CLI.
