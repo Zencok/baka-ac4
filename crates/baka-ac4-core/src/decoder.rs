@@ -963,6 +963,8 @@ pub enum AudioKind {
     AjocCoreSignals,
     /// Reconstructed object signals, LFE first when present; not speaker feeds.
     AjocObjectSignals,
+    /// Basic gain/X-position stereo projection; not an immersive renderer.
+    AjocStereoPreview,
 }
 
 /// Layout information returned by [`Ac4Decoder::decode_frame_into`] when a
@@ -1015,6 +1017,7 @@ pub struct Ac4Decoder {
     ajoc_core: bool,
     ajoc_metadata_enabled: bool,
     ajoc_objects: bool,
+    ajoc_preview: bool,
     ajoc_metadata: Option<crate::ajoc::AjocMetadata>,
     ajoc_qmf_available: bool,
     variable_pairs: Vec<(usize, usize)>,
@@ -1037,6 +1040,7 @@ impl Ac4Decoder {
             ajoc_core: false,
             ajoc_metadata_enabled: false,
             ajoc_objects: false,
+            ajoc_preview: false,
             ajoc_metadata: None,
             ajoc_qmf_available: false,
             variable_pairs: Vec::with_capacity(6),
@@ -6717,13 +6721,18 @@ impl Ac4Decoder {
                     .ok_or_else(|| invalid("missing A-JOC matrices"))?,
                 &core,
                 has_lfe.then_some(&lfe[..nb_samples]),
+                self.ajoc_preview,
                 data,
             )?;
             self.st.first_frame = 0;
             return Ok(Some(FrameInfo {
-                audio_kind: AudioKind::AjocObjectSignals,
+                audio_kind: if self.ajoc_preview {
+                    AudioKind::AjocStereoPreview
+                } else {
+                    AudioKind::AjocObjectSignals
+                },
                 sample_rate: sample_rate as u32,
-                channel_mask: 0,
+                channel_mask: if self.ajoc_preview { 3 } else { 0 },
                 nb_samples,
                 key_frame: self.st.iframe_global != 0,
             }));
@@ -6781,6 +6790,7 @@ impl Ac4Decoder {
             self.ajoc_core = enable;
             if !enable {
                 self.ajoc_objects = false;
+                self.ajoc_preview = false;
                 self.ajoc_metadata_enabled = false;
             }
             self.flush();
@@ -6798,6 +6808,7 @@ impl Ac4Decoder {
             self.ajoc_metadata_enabled = enable;
             if !enable {
                 self.ajoc_objects = false;
+                self.ajoc_preview = false;
             }
             self.flush();
         }
@@ -6814,13 +6825,30 @@ impl Ac4Decoder {
     /// AjocObjectSignals. OAMD gain/position rendering and dialogue enhancement
     /// are not applied. Not a headphone/speaker playback mode.
     pub fn set_ajoc_object_signals(&mut self, enable: bool) {
+        let was_preview = self.ajoc_preview;
+        self.ajoc_preview = false;
         if enable {
             self.set_ajoc_metadata(true);
         }
-        if self.ajoc_objects != enable {
+        if self.ajoc_objects != enable || was_preview {
             self.ajoc_objects = enable;
             self.flush();
         }
+    }
+
+    /// Enable a basic stereo preview using OAMD object gain and X position,
+    /// with sample-timed smoothing. Y/Z, zones, extents, trims, distance and
+    /// divergence are not rendered. This is not a binaural or reference-
+    /// equivalent immersive mode. Disabling retains raw object signal mode.
+    pub fn set_ajoc_stereo_preview(&mut self, enable: bool) {
+        if self.ajoc_preview == enable {
+            return;
+        }
+        if enable {
+            self.set_ajoc_object_signals(true);
+        }
+        self.ajoc_preview = enable;
+        self.flush();
     }
 
     /// Copy the last inspected A-JOC frame's fullband core QMF planes, in

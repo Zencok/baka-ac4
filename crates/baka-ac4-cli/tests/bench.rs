@@ -33,6 +33,9 @@ fn object_output_rejects_conflicting_modes_before_opening_input() {
     for flags in [
         ["--object-signals", "--core-signals"],
         ["--object-signals", "--fast"],
+        ["--stereo-preview", "--core-signals"],
+        ["--stereo-preview", "--object-signals"],
+        ["--stereo-preview", "--fast"],
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_baka-ac4"))
             .args(["decode", flags[0], flags[1], "missing.ac4", "unused.wav"])

@@ -88,7 +88,9 @@ pub fn decode_packets(packets: &[Vec<u8>]) -> Result<()> {
 | A-JOC 核心下混信号 | 显式启用 `set_ajoc_core_signals(true)` 或 CLI `--core-signals`，已测试 448/1500 kbit/s 样本 |
 | A-JOC 重建矩阵 | 显式启用 `set_ajoc_metadata(true)`；有界解析、差分恢复与反量化，PCM 仍为核心信号 |
 | A-JOC 对象信号重建 | 显式启用 `set_ajoc_object_signals(true)` 或 CLI `--object-signals`；已实现 QMF 矩阵、去相关、瞬态抑制和对象 PCM |
-| A-JOC 扬声器／耳机渲染 | 待完成；对象增益、位置渲染及参考 PCM 一致性尚未建立 |
+| A-JOC 对象属性 | `ajoc_metadata()` 提供增益、绝对／差分／扩展精度位置及采样级时序 |
+| A-JOC 双声道预览 | 显式启用 `set_ajoc_stereo_preview(true)` 或 CLI `--stereo-preview`，应用增益和左右位置 |
+| A-JOC 沉浸式扬声器／耳机渲染 | 待完成完整空间属性、双耳渲染及参考 PCM 一致性验证 |
 
 尚未验证所有 AC-4 profile 和声道布局。CLI 使用 WAVE_FORMAT_EXTENSIBLE 保留多声道掩码；未锚定的核心信号保持零掩码，不会据此猜测扬声器布局。
 
@@ -101,6 +103,11 @@ A-JOC 核心信号通过 `AudioKind::AjocCoreSignals` 标识。`channel_mask == 
 输出标记为 `AjocObjectSignals`，通道掩码为零；存在 LFE 时放在第一路。
 已测样本输出 21 路，尚未应用 OAMD 对象增益和位置渲染，峰值可能超过 1，
 建议使用浮点导出保留幅度。该选项不能与 `--core-signals` 或 `--fast` 同用。
+
+`baka-ac4 decode --stereo-preview --f32 input.mp4 preview.wav` 可导出基础双声道预览，
+根据对象增益和左右位置按元数据时序平滑变化，输出标记为 `AjocStereoPreview`，
+扬声器掩码为 `0x3`。预览尚未处理前后／仰角、区域／尺寸、trim、距离、发散和双耳线索，
+不能视为完整沉浸式渲染。输出不做归一化或限幅；各 A-JOC 输出模式互斥，预览不能与 `--fast` 同用。
 
 ## 播放器集成
 

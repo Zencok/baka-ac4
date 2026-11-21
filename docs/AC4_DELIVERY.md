@@ -1,6 +1,6 @@
 # AC-4 delivery work
 
-Updated: 2026-11-21
+Updated: 2026-11-22
 
 ## Target
 
@@ -43,15 +43,17 @@ not a runtime dependency or distributable library.
   release runs (1.990 s / 3.443 s; peaks 0.3866 / 0.3319). Numerical parity with
   reference core PCM is not yet established.
 - Raw object-signal reconstruction is implemented in the opt-in mode described
-  below; object gain/position rendering and reference parity remain in progress.
+  below; basic gain/X stereo projection is implemented separately, while full
+  spatial rendering and reference parity remain in progress.
 - Reconstruction-matrix inspection now passes both complete recordings,
   including shared timing, cross-frame coefficient history and exact payload
   boundary assertions; see the reconstruction-parameters section below.
 
 ## Remaining acceptance
 
-- Interpret A-JOC dynamic object gain/position metadata; render to
-  defined speaker/headphone outputs and compare against the reference.
+- Apply the remaining Y/Z, zone/extent, screen/distance/divergence and trim
+  controls in defined immersive speaker/headphone outputs; compare against the
+  reference. Gain/position transport and basic stereo preview are implemented.
 - Validate full-song outputs, finite samples, seek/reset history, corrupted inputs
   and dynamic layout changes. Preserve ordinary stereo and broadcast regressions.
 - Complete ACPL/other multichannel gaps where actual streams expose them.
@@ -125,15 +127,17 @@ decode errors. These are bitstream consistency checks, not reference PCM parity.
 The parser is bounded to 16 fullband downmix signals and 64 fullband objects;
 the existing core decoder supports at most 12 total input signals. Static/mixed
 assignments and alternative presentations are explicitly rejected in inspection
-mode. Object position/zone/other metadata and length-delimited extensions are
-traversed, without claiming their rendering semantics. A damaged matrix payload
+mode. Object gain/position/zone/other metadata and per-object extended precision
+are now retained as described below; common-data trim/render extensions are
+still skipped. A damaged matrix payload
 cannot commit partial dialogue/coefficient history. Authored tests cover exact
 bit truncations, mutations, sparse resets, incompatible time history, quantizer
 wrap and frequency-to-time transitions. All codebook symbols are round-tripped.
 
 Inspection-only output remains `AjocCoreSignals`. The separate object-signal
-mode below implements reconstruction. OAMD-driven rendering and comparison of
-rendered PCM against the working native reference remain pending. No player
+mode below implements reconstruction. A separate basic stereo preview applies
+gain and X position. Full OAMD-driven rendering and comparison of rendered PCM
+against the working native reference remain pending. No player
 integration should advertise full A-JOC spatial playback from these milestones.
 
 ## A-JOC object-signal reconstruction
@@ -178,10 +182,48 @@ It allocates signal/parameter storage and does not claim an allocation-free
 real-time callback path. `copy_ajoc_core_qmf` is an inspection API for native DSP
 consumers, with last-frame availability tracked independently of option changes.
 
+## Object properties and stereo preview
+
+Object-major `downmix_metadata` / `upmix_metadata` now expose resolved gain,
+priority, normalized room position, zone, width, screen/depth and distance
+properties, retained divergence codes, trim-disable and sample-timed updates.
+The parser distinguishes default, inactive, basic/render reuse and partial reuse,
+including gain references to the preceding object in the same update block.
+Signed position deltas use two's complement. Standard-precision coordinate
+history is separate from per-update extended precision, preventing cumulative
+precision drift. Object extension reads cannot cross their own declared size.
+All these histories participate in the existing transactional payload parsing.
+
+Timing offsets follow Part 2 clause 5.9: `sample_offset + 32*block_offset_factor`.
+The fixed/explicit ramp durations and all 16 ramp-table entries are decoded.
+The current complete streams report gains of 0 dB (or inactive/muted), with
+X/Y spanning 0–1 and Z spanning -0.013333334–1, including extended precision.
+Both tiers continue to reach the exact audio boundary with at most 7 fill bits.
+
+`set_ajoc_stereo_preview(true)` / `--stereo-preview` adds an explicitly labelled
+basic projection. It applies resolved object gains and equal-power X panning,
+with PCM-sample update offsets and linear coefficient ramps that can cross codec
+frames. LFE uses a fixed 0.5 coefficient into each side. Hard left/right endpoints
+are exact; positions beyond the X range are clamped for this projection only.
+There is no gain normalization, limiting or clipping in the renderer. Its output
+kind is `AjocStereoPreview`, with stereo speaker mask `0x3`, not raw-object mask
+zero. `--fast` and other A-JOC output flags are rejected when preview is chosen.
+
+Both complete streams passed all 5025 preview frames, finite PCM and nonzero L/R
+difference checks. Peaks were 1.4227675 (448) and 2.2646089 (1500); use float export
+to retain the range. Flush/replay matched the first six frames sample for sample,
+and mode transitions, repeated configuration and failed-packet invalidation pass.
+Raw object/core output and ordinary decoding regressions are retained separately.
+
+This is not an immersive renderer or a claim of native-reference parity. It does
+not apply Y/Z, zone/extent, trims, screen/distance/divergence, presentation loudness,
+optional dialogue enhancement or binaural cues. Full metadata-driven immersive
+rendering and independent gain/timing/position parity remain pending.
+
 ## Validation commands
 
 - `cargo test --release --locked`: unit, generated A-JOC, malformed input,
-  history reset and transform allocation checks (52 tests passed).
+  history reset and transform allocation checks (62 tests passed).
 - `cargo clippy --release --locked --all-targets -- -D warnings`.
 - `BAKA_AC4_IMMERSIVE_DIR=<local-directory> cargo test --release --locked
   -p baka-ac4-cli --test immersive -- --ignored --nocapture`: both real A-JOC
@@ -208,6 +250,17 @@ CLI checks on the first 48 packets of both tiers produced float extensible WAV
 with 21 signals, 48 kHz and a zero speaker mask; every TOC entry identified
 `ajoc-object-signals`. Ordinary stream hashes and SSF mutation SNR remain at
 their previous baselines.
+
+Ten new authored tests exercise gain/previous-object references, absolute/delta/
+extended coordinates, inactive defaults, timing fields and bit truncations;
+the stereo tests cover panning/gain, LFE policy, sample offsets, cross-frame and
+interrupted ramps, mutation rejection and arithmetic failure/reset. A third
+optional full-stream test exercises the stereo preview. The conflicting-mode
+CLI test now includes preview flags.
+
+CLI checks on the first 48 packets of each tier also confirmed 48 kHz stereo
+float WAV output and stereo mask `0x3` in every preview TOC entry. Raw object
+WAV files remain byte-identical to the preceding implementation on both tiers.
 
 Removed redundant homepage metadata which produced manifest warnings and made
 the strict regression script reject an otherwise successful Clippy run.

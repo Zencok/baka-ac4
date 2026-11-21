@@ -12,6 +12,8 @@ pub(crate) struct ObjectDecoder {
     decorrelation: AjocDecorrelation,
     qmf: QmfPlanes,
     history: Vec<[f32; 1280]>,
+    preview: super::stereo::StereoPreview,
+    object_pcm: Vec<Vec<f32>>,
 }
 
 impl ObjectDecoder {
@@ -21,6 +23,7 @@ impl ObjectDecoder {
         metadata: &AjocMetadata,
         core: &[Vec<QmfSlot>],
         lfe: Option<&[f32]>,
+        preview: bool,
         output: &mut Vec<Vec<f32>>,
     ) -> Result<()> {
         self.matrix
@@ -32,12 +35,17 @@ impl ObjectDecoder {
             return Err(invalid("A-JOC LFE plane"));
         }
         self.history.resize(objects, [0.0; 1280]);
-        output.resize_with(objects + first, Vec::new);
-        for plane in output.iter_mut() {
+        let object_pcm = if preview {
+            &mut self.object_pcm
+        } else {
+            &mut *output
+        };
+        object_pcm.resize_with(objects + first, Vec::new);
+        for plane in object_pcm.iter_mut() {
             plane.resize(samples, 0.0);
         }
         if let Some(lfe) = lfe {
-            output[0].copy_from_slice(lfe);
+            object_pcm[0].copy_from_slice(lfe);
         }
         for (object, plane) in self.qmf.iter().enumerate() {
             for (ts, slot) in plane.iter().enumerate() {
@@ -48,8 +56,12 @@ impl ObjectDecoder {
                 if pcm.iter().any(|v| !v.is_finite()) {
                     return Err(invalid("non-finite A-JOC object PCM"));
                 }
-                output[first + object][ts * 64..(ts + 1) * 64].copy_from_slice(&pcm);
+                object_pcm[first + object][ts * 64..(ts + 1) * 64].copy_from_slice(&pcm);
             }
+        }
+        if preview {
+            self.preview
+                .process_into(metadata, &self.object_pcm, output)?;
         }
         Ok(())
     }

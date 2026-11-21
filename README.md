@@ -88,7 +88,9 @@ Packets may include the `0xAC40` / `0xAC41` sync header. The decoder returns `Ok
 | A-JOC core downmix signals | Explicit `set_ajoc_core_signals(true)` / CLI `--core-signals`; tested 448/1500 kbit/s streams |
 | A-JOC reconstruction matrices | Opt-in `set_ajoc_metadata(true)`; bounded parsing and differential/dequantized gains; core PCM output |
 | A-JOC object signal reconstruction | Opt-in `set_ajoc_object_signals(true)` / CLI `--object-signals`; QMF matrices, decorrelation/ducking and object PCM |
-| A-JOC speaker/headphone rendering | Pending; object gain/position rendering and reference PCM parity are not established |
+| A-JOC object properties | Resolved gain, absolute/differential/extended position and sample timing via `ajoc_metadata()` |
+| A-JOC stereo preview | Explicit `set_ajoc_stereo_preview(true)` / CLI `--stereo-preview`; gain and X-position projection |
+| A-JOC immersive speaker/headphone rendering | Pending; full spatial controls, binaural rendering and reference PCM parity are not established |
 
 Not every AC-4 profile or channel layout has been validated. The CLI preserves multichannel speaker masks in WAVE_FORMAT_EXTENSIBLE output. Unanchored core signals retain a zero mask.
 
@@ -104,6 +106,13 @@ speaker mask and LFE first when present. The tested streams produce 21 planes.
 These planes precede OAMD object gain/position rendering and can exceed unity;
 float32 export preserves their range. This option cannot be combined with
 `--core-signals` or `--fast`.
+
+`baka-ac4 decode --stereo-preview --f32 input.mp4 preview.wav` produces a basic
+two-channel projection using object gain and left/right position with timed
+smoothing. Output kind is `AjocStereoPreview`, mask `0x3`. This preview omits
+Y/Z, zones/extents, trims, distance, divergence and binaural cues. It does not
+claim reference-equivalent immersive rendering. No limiter or normalization is
+applied. Select only one A-JOC output mode; preview also requires full QMF.
 
 ## Integration
 

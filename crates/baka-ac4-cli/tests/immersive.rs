@@ -4,6 +4,48 @@ use baka_ac4_core::{Ac4Decoder, AudioKind};
 
 #[test]
 #[ignore = "set BAKA_AC4_IMMERSIVE_DIR to a local acceptance sample directory"]
+fn complete_ajoc_tiers_have_finite_sample_timed_stereo_preview() {
+    std::thread::Builder::new().stack_size(64*1024*1024).spawn(|| {
+        let root=std::path::PathBuf::from(std::env::var_os("BAKA_AC4_IMMERSIVE_DIR").expect("sample directory"));
+        for quality in ["dolbyajoc448","dolbyajoc1500"] {
+            let bytes=std::fs::read(root.join(format!("{quality}.mp4"))).unwrap();
+            let track=mp4::read_ac4_track(&bytes).unwrap();
+            let mut decoder=Ac4Decoder::new().unwrap();decoder.set_ajoc_stereo_preview(true);
+            let mut pcm=Vec::new();let mut first=Vec::new();let mut peak=0.0f32;let mut difference=0.0f64;
+            for (index,&(offset,size)) in track.samples.iter().enumerate() {
+                decoder.set_ajoc_stereo_preview(true); // repeated configuration must preserve history
+                let frame=decoder.decode_frame_into(&bytes[offset as usize..offset as usize+size as usize],&mut pcm)
+                    .unwrap_or_else(|e|panic!("{quality} preview frame {index}: {e}")).unwrap();
+                assert_eq!(frame.audio_kind,AudioKind::AjocStereoPreview);assert_eq!(frame.channel_mask,3);
+                assert_eq!(pcm.len(),2);assert!(pcm.iter().all(|p|p.len()==frame.nb_samples));
+                for sample in 0..frame.nb_samples {
+                    for plane in &pcm { assert!(plane[sample].is_finite());peak=peak.max(plane[sample].abs()); }
+                    difference+=f64::from((pcm[0][sample]-pcm[1][sample]).abs());
+                }
+                if index<6 { first.push(pcm.clone()); }
+            }
+            assert!(peak>0.01 && peak<100.0);assert!(difference>1.0);
+            decoder.flush();
+            for (index,&(offset,size)) in track.samples[..6].iter().enumerate() {
+                decoder.decode_frame_into(&bytes[offset as usize..offset as usize+size as usize],&mut pcm).unwrap().unwrap();
+                assert_eq!(pcm,first[index],"{quality} preview reset frame {index}");
+            }
+            let (offset,size)=track.samples[0];let packet=&bytes[offset as usize..offset as usize+size as usize];
+            decoder.set_ajoc_stereo_preview(false);
+            assert_eq!(decoder.decode_frame_into(packet,&mut pcm).unwrap().unwrap().audio_kind,AudioKind::AjocObjectSignals);
+            assert_eq!(pcm.len(),21);
+            decoder.set_ajoc_stereo_preview(true);decoder.decode_frame_into(packet,&mut pcm).unwrap().unwrap();
+            assert_eq!(pcm.len(),2);
+            decoder.set_ajoc_object_signals(true);
+            assert_eq!(decoder.decode_frame_into(packet,&mut pcm).unwrap().unwrap().audio_kind,AudioKind::AjocObjectSignals);
+            assert!(decoder.decode_frame_into(&[0;7],&mut pcm).is_err());assert!(pcm.is_empty());
+            eprintln!("{quality}: {} stereo-preview frames, peak {peak}, L/R difference {difference:.3}",track.samples.len());
+        }
+    }).unwrap().join().unwrap();
+}
+
+#[test]
+#[ignore = "set BAKA_AC4_IMMERSIVE_DIR to a local acceptance sample directory"]
 fn complete_ajoc_tiers_reconstruct_object_signals_and_reset() {
     std::thread::Builder::new()
         .stack_size(64 * 1024 * 1024)
@@ -131,6 +173,9 @@ fn complete_ajoc_tiers_have_finite_core_pcm_and_honest_layouts() {
                 let mut samples = 0usize;
                 let mut max_padding = 0;
                 let mut dt_count = 0;
+                let mut positions = [f32::INFINITY; 3];
+                let mut position_max = [f32::NEG_INFINITY; 3];
+                let mut gains = (i16::MAX, i16::MIN);
                 for (index, &(offset, size)) in track.samples.iter().enumerate() {
                     let packet = &bytes[offset as usize..offset as usize + size as usize];
                     let frame = decoder
@@ -150,6 +195,21 @@ fn complete_ajoc_tiers_have_finite_core_pcm_and_honest_layouts() {
                     );
                     assert_eq!(metadata.downmix_blocks, 1);
                     assert_eq!(metadata.upmix_blocks, 1);
+                    assert_eq!(metadata.upmix_metadata.len(), 21);
+                    for update in metadata.upmix_metadata.iter().flatten() {
+                        assert!(update.timing.sample < frame.nb_samples as u16);
+                        assert!(update.timing.ramp <= 2048);
+                        if let Some(db) = update.properties.gain_db {
+                            gains.0 = gains.0.min(db);
+                            gains.1 = gains.1.max(db);
+                        }
+                        for axis in 0..3 {
+                            let position = update.properties.position[axis];
+                            assert!(position.is_finite());
+                            positions[axis] = positions[axis].min(position);
+                            position_max[axis] = position_max[axis].max(position);
+                        }
+                    }
                     assert_eq!(metadata.decorrelators, [true, true, true]);
                     for object in metadata.objects.iter().filter(|o| o.present) {
                         assert_eq!(object.bands, if signals == 8 { 12 } else { 23 });
@@ -213,6 +273,10 @@ fn complete_ajoc_tiers_have_finite_core_pcm_and_honest_layouts() {
                 assert!(decoder.ajoc_metadata().is_none());
                 eprintln!(
                     "metadata: padding <= {max_padding} bits, {dt_count} time-delta elements"
+                );
+                eprintln!(
+                    "OAMD: gain {}..{} dB, positions {positions:?}..{position_max:?}",
+                    gains.0, gains.1
                 );
                 eprintln!(
                     "{quality}: {} frames, {samples} samples, {signals} signals, peak {peak}",

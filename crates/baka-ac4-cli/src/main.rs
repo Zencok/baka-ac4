@@ -16,6 +16,7 @@ enum SignalOutput {
     Channels,
     Core,
     Objects,
+    StereoPreview,
 }
 
 impl SignalOutput {
@@ -24,6 +25,7 @@ impl SignalOutput {
             Self::Channels => decoder.set_ajoc_core_signals(false),
             Self::Core => decoder.set_ajoc_core_signals(true),
             Self::Objects => decoder.set_ajoc_object_signals(true),
+            Self::StereoPreview => decoder.set_ajoc_stereo_preview(true),
         }
     }
 }
@@ -53,24 +55,32 @@ fn main() -> ExitCode {
 fn run() -> ExitCode {
     let core = std::env::args().any(|a| a == "--core-signals");
     let objects = std::env::args().any(|a| a == "--object-signals");
+    let preview = std::env::args().any(|a| a == "--stereo-preview");
     let args: Vec<String> = std::env::args()
-        .filter(|a| a != "--core-signals" && a != "--object-signals")
+        .filter(|a| a != "--core-signals" && a != "--object-signals" && a != "--stereo-preview")
         .collect();
-    if core && objects {
-        eprintln!("error: choose either --core-signals or --object-signals");
+    if usize::from(core) + usize::from(objects) + usize::from(preview) > 1 {
+        eprintln!("error: choose one of --core-signals, --object-signals or --stereo-preview");
         return ExitCode::FAILURE;
     }
-    if objects && args.iter().any(|a| a == "--fast") {
-        eprintln!("error: --object-signals requires full QMF processing; remove --fast");
+    if (objects || preview) && args.iter().any(|a| a == "--fast") {
+        eprintln!("error: object reconstruction requires full QMF processing; remove --fast");
         return ExitCode::FAILURE;
     }
-    let signals = if objects {
+    let signals = if preview {
+        SignalOutput::StereoPreview
+    } else if objects {
         SignalOutput::Objects
     } else if core {
         SignalOutput::Core
     } else {
         SignalOutput::Channels
     };
+    if preview {
+        eprintln!(
+            "A-JOC stereo preview selected: object gain and left/right position only; no immersive/binaural rendering, normalization or limiting."
+        );
+    }
     if objects {
         eprintln!(
             "A-JOC object-signal output selected: LFE first when present; no speaker/headphone rendering or OAMD object gains."
@@ -177,6 +187,9 @@ fn usage() -> ExitCode {
     eprintln!(
         "optional: --object-signals reconstructs A-JOC object signals without speaker/headphone rendering"
     );
+    eprintln!(
+        "optional: --stereo-preview projects A-JOC objects to stereo using gain and X position only"
+    );
     eprintln!("usage: baka-ac4 toc <input.mp4 | input.ac4>");
     eprintln!("       baka-ac4 decode [--fast] [--f32] <input.mp4 | input.ac4> <output.wav>");
     eprintln!("       --fast skips the QMF round trip for simple streams (slightly");
@@ -242,6 +255,7 @@ fn toc(path: &str, signals: SignalOutput) -> ExitCode {
                     match f.audio_kind {
                         baka_ac4_core::AudioKind::AjocCoreSignals => "ajoc-core-signals",
                         baka_ac4_core::AudioKind::AjocObjectSignals => "ajoc-object-signals",
+                        baka_ac4_core::AudioKind::AjocStereoPreview => "ajoc-stereo-preview",
                         baka_ac4_core::AudioKind::Channels => "channels",
                     },
                     feats.spec_frontend_l,

@@ -8,8 +8,10 @@ use crate::vlc::Vlc;
 use std::sync::OnceLock;
 
 pub mod decorrelation;
+pub mod oamd;
 pub mod reconstruction;
 pub(crate) mod signals;
+pub mod stereo;
 
 /// One reconstruction parameter update, in QMF slots.
 #[derive(Clone, Debug)]
@@ -49,6 +51,9 @@ pub struct AjocMetadata {
     /// Downmix/upmix metadata block counts, including LFE when present.
     pub downmix_blocks: usize,
     pub upmix_blocks: usize,
+    /// Object-major timed property updates, LFE first when present.
+    pub downmix_metadata: Vec<Vec<oamd::ObjectUpdate>>,
+    pub upmix_metadata: Vec<Vec<oamd::ObjectUpdate>>,
     /// Exact number of side-information bits consumed, excluding byte padding.
     pub bits: usize,
     /// Bits left inside audio_size after the side-information syntax.
@@ -59,7 +64,9 @@ pub struct AjocMetadata {
 pub(crate) struct History {
     dialogue: usize,
     matrices: Vec<PreviousMatrix>,
-    common_blocks: usize,
+    common_oamd: Vec<oamd::ObjectTiming>,
+    downmix_oamd: Vec<oamd::ObjectState>,
+    upmix_oamd: Vec<oamd::ObjectState>,
 }
 
 pub(crate) fn common_timing(
@@ -87,7 +94,7 @@ pub(crate) fn common_timing(
             r.skip(bytes * 8)?;
         }
     }
-    history.common_blocks = if r.flag()? { r.timing()? } else { 0 };
+    history.common_oamd = if r.flag()? { r.timing()? } else { Vec::new() };
     Ok(())
 }
 
@@ -202,98 +209,6 @@ impl Reader<'_, '_> {
                 .ok_or_else(|| invalid("A-JOC extension length overflow"))?;
         }
         Err(invalid("A-JOC extension length overflow"))
-    }
-
-    fn timing(&mut self) -> Result<usize> {
-        match self.prefix()? {
-            2 => {
-                self.prefix()?;
-            }
-            3 => {
-                self.get(5)?;
-            }
-            _ => {}
-        }
-        let blocks = self.get(3)? as usize;
-        for _ in 0..blocks {
-            self.get(6)?;
-            if self.get(2)? == 3 {
-                let bits = if self.flag()? { 4 } else { 11 };
-                self.get(bits)?;
-            }
-        }
-        Ok(blocks)
-    }
-
-    fn object_block(&mut self, iframe: bool, dynamic: bool) -> Result<()> {
-        let active = !self.flag()?;
-        if active && (iframe || !self.flag()?) && !self.flag()? {
-            let basic = self.prefix()?;
-            if basic != 3 && self.prefix()? == 0 {
-                self.get(6)?;
-            }
-            if basic != 0 {
-                self.get(5)?;
-            }
-        }
-        if active && dynamic && (iframe || !self.flag()?) {
-            let partial = !iframe && self.flag()?;
-            let (other, zone, position) = if partial {
-                (self.flag()?, self.flag()?, self.flag()?)
-            } else {
-                (true, true, true)
-            };
-            if position {
-                let delta = !iframe && self.flag()?;
-                self.skip(if delta { 9 } else { 17 })?;
-            }
-            if zone && !self.flag()? {
-                let mask = self.get(3)?;
-                if mask & 1 != 0 {
-                    self.get(3)?;
-                }
-            }
-            if other && !self.flag()? {
-                let mask = self.get(4)?;
-                if mask & 1 != 0 {
-                    let bits = if self.flag()? { 15 } else { 5 };
-                    self.skip(bits)?;
-                }
-                if mask & 2 != 0 {
-                    self.get(5)?;
-                }
-                if mask & 4 != 0 && !self.flag()? {
-                    self.get(4)?;
-                }
-                if mask & 8 != 0 {
-                    match self.get(2)? {
-                        0 => {
-                            self.get(2)?;
-                        }
-                        2 | 3 => {
-                            self.get(6)?;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-        if self.flag()? {
-            let bytes = self.get(4)? as usize + 1;
-            // Additional per-object metadata is length delimited. Retained
-            // transport alignment does not imply support for its semantics.
-            self.skip(bytes * 8)?;
-        }
-        Ok(())
-    }
-
-    fn objects(&mut self, fullband: usize, lfe: bool, blocks: usize, iframe: bool) -> Result<()> {
-        for object in 0..fullband + usize::from(lfe) {
-            for block in 0..blocks {
-                self.object_block(iframe && block == 0, !(lfe && object == 0))?;
-            }
-        }
-        Ok(())
     }
 
     fn matrix(
@@ -418,12 +333,13 @@ fn parse_inner(
     let dmx_blocks = if r.flag()? {
         r.timing()?
     } else {
-        history.common_blocks
+        history.common_oamd.clone()
     };
-    if iframe && dmx_blocks == 0 {
+    if iframe && dmx_blocks.is_empty() {
         return Err(invalid("missing A-JOC iframe object timing"));
     }
-    r.objects(downmix, lfe, dmx_blocks, iframe)?;
+    let downmix_metadata =
+        r.objects(downmix, lfe, &dmx_blocks, iframe, &mut history.downmix_oamd)?;
     if r.flag()? {
         let bytes = r.variable(3)? + 1;
         r.skip(bytes * 8)?;
@@ -511,15 +427,15 @@ fn parse_inner(
         r.timing()?
     } else {
         if r.flag()? {
-            dmx_blocks
+            dmx_blocks.clone()
         } else {
-            history.common_blocks
+            history.common_oamd.clone()
         }
     };
-    if iframe && umx_blocks == 0 {
+    if iframe && umx_blocks.is_empty() {
         return Err(invalid("missing A-JOC iframe upmix timing"));
     }
-    r.objects(upmix, lfe, umx_blocks, iframe)?;
+    let upmix_metadata = r.objects(upmix, lfe, &umx_blocks, iframe, &mut history.upmix_oamd)?;
     history.matrices.resize_with(upmix, PreviousMatrix::default);
     for (object, previous) in objects.iter_mut().zip(&mut history.matrices) {
         if !object.present || npoints == 0 {
@@ -549,8 +465,10 @@ fn parse_inner(
         decorrelators,
         points,
         objects,
-        downmix_blocks: dmx_blocks,
-        upmix_blocks: umx_blocks,
+        downmix_blocks: dmx_blocks.len(),
+        upmix_blocks: umx_blocks.len(),
+        downmix_metadata,
+        upmix_metadata,
         bits: r.gb.bits_count() - start,
         padding_bits: end - r.gb.bits_count(),
     })

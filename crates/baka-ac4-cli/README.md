@@ -10,6 +10,7 @@ baka-ac4 decode --f32 input.ac4 output.wav
 baka-ac4 toc input.m4a
 baka-ac4 bench input.mp4 10
 baka-ac4 decode --object-signals --f32 input.mp4 objects.wav
+baka-ac4 decode --stereo-preview --f32 input.mp4 preview.wav
 ```
 
 - Input: MP4/M4A containing an AC-4 track, or a raw `.ac4` stream.
@@ -22,6 +23,11 @@ baka-ac4 decode --object-signals --f32 input.mp4 objects.wav
   and labels `toc` output `ajoc-object-signals`. It retains a zero speaker mask.
   Object gains/positions are not rendered. Use `--f32` to retain peaks above unity.
   This option conflicts with `--core-signals` and `--fast`.
+- `--stereo-preview` applies object gain and equal-power left/right panning with
+  sample-timed smoothing. TOC labels it `ajoc-stereo-preview`, with mask `0x3`.
+  This is a basic stereo projection; Y/Z, zone/extent, trims, distance/divergence
+  and binaural cues are not applied. No normalization or limiting is applied;
+  use `--f32` to preserve peaks. It conflicts with other signal modes and `--fast`.
 - `bench` reports minimum and median decoding time. The optional round count defaults to 10 and accepts `1..=10000`.
 
 The CLI reads the input file into memory. It does not provide streaming playback or DRM decryption. Default decoding rejects object-coded audio; the explicit signal modes support tested A-JOC profiles, without speaker/headphone rendering. Additional codec limitations are listed in the project documentation. Multichannel WAV output preserves the speaker mask using WAVE_FORMAT_EXTENSIBLE;
