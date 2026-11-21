@@ -100,7 +100,7 @@ object-coded streams that it cannot render. See [delivery status](docs/AC4_DELIV
 
 Use `baka-ac4-core` as the codec layer and keep source access, demuxing, timestamps and audio output in your player. Prefer the system decoder when it supports the stream; use Rust decoding when it does not.
 
-AC-4 decoding is stateful. Seek from a suitable iframe and discard pre-roll before the target. Recreate the decoder when complete history isolation is required: `flush()` marks the stream for resynchronization but does not clear every history array.
+AC-4 decoding is stateful. Seek from a suitable iframe and discard pre-roll before the target. `flush()` now clears all stream histories and waits for a fresh iframe, preserving transform plans and output options. It allocates fresh channel state and belongs on the playback control path.
 
 The core does not provide networking, DRM decryption or a playback device. The CLI reads the input file into memory and is intended for file conversion and inspection, not as a streaming playback layer.
 

@@ -6702,7 +6702,10 @@ impl Ac4Decoder {
     /// feeds. This does not reconstruct or render transmitted upmix objects.
     /// Disabled by default so callers explicitly choose core output.
     pub fn set_ajoc_core_signals(&mut self, enable: bool) {
-        self.ajoc_core = enable;
+        if self.ajoc_core != enable {
+            self.ajoc_core = enable;
+            self.flush();
+        }
     }
 
     /// Enables or disables the QMF round-trip shortcut for simple streams
@@ -6723,10 +6726,13 @@ impl Ac4Decoder {
         }
     }
 
-    /// Resets inter-frame state.
+    /// Clears all per-stream history and waits for a fresh iframe.
+    /// Transform plans/tables and explicit output options are retained.
+    /// Call on the playback control path: replacing state allocates channel
+    /// histories, so this is not a real-time PCM callback operation.
     pub fn flush(&mut self) {
-        self.st.have_iframe = 0;
-        self.st.sequence_counter_prev = 0;
+        self.st = State::default();
+        self.variable_pairs.clear();
     }
 }
 

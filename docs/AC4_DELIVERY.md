@@ -68,3 +68,11 @@ https://www.etsi.org/deliver/etsi_ts/103100_103199/10319002/01.03.01_60/ts_10319
 
 The last three rows are different codecs and do not establish AC-4 support.
 Media bytes, credentials, signed URLs and external libraries remain local.
+
+## History reset
+
+`flush()` now replaces all per-stream history, retaining transform plans and
+output options. Before the fix, replay failed a fresh-decoder comparison at the
+first frame. Regression coverage compares all six frames for stereo simple,
+stereo A-SPX and 5.1 A-SPX fixtures, with QMF bypass enabled and disabled.
+This establishes deterministic history isolation, not a seek latency guarantee.

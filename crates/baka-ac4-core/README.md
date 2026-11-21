@@ -27,7 +27,9 @@ Channel-coded audio, ASF/SSF, QMF and A-SPX paths are implemented. A-JOC downmix
 are unanchored signals and must not be assigned speaker positions by count.
 Object reconstruction/rendering is unsupported, and ACPL successful decoding still needs real-stream validation. Full QMF processing is enabled by default.
 
-The host owns source access, demuxing, timestamps, seek pre-roll and audio output. Recreate the decoder for complete history isolation; `flush()` marks resynchronization without clearing every history array.
+The host owns source access, demuxing, timestamps, seek pre-roll and audio output. `flush()` clears all stream histories and waits for a fresh iframe. Transform plans
+and output options are preserved. Call it on the control path because it allocates
+fresh channel history; it is not a real-time PCM callback operation.
 
 [Project and CLI](https://github.com/Zencok/baka-ac4) · [简体中文](https://github.com/Zencok/baka-ac4/blob/main/README.zh-CN.md)
 

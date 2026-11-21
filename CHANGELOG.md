@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Reset all per-stream DSP/TOC histories on `flush()` and core-mode changes;
+  replay after reset matches a fresh decoder bit for bit.
+
 - Add explicit A-JOC core-signal decoding for tested 448/1500 kbit/s streams,
   indexed audio substream selection, variable channel elements and bounded reads.
 - Report `AudioKind` and preserve zero speaker masks for unanchored signals;
