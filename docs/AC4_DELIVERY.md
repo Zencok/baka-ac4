@@ -23,8 +23,17 @@ not a runtime dependency or distributable library.
   and missing track timescale fixed in f0443db. Seven CLI tests and release Clippy
   passed. The embedded MP4 fuzz seed is itself a truncated file; the tests also
   cover a completed container and command-level rejection before WAV creation.
-- Native reference on Android successfully decoded the first 48 A-JOC 1500
-  packets to stereo PCM. This establishes a working comparison side only.
+- Native reference harness: ordinary stereo control produces nonzero PCM
+  (peak 0.06818). The first 48 A-JOC 1500 packets return success but produce
+  silence, while Rust core planes are nonzero (peak 0.01714 on those packets).
+  Therefore that backend is not a valid A-JOC numerical reference; success
+  return codes alone are not accepted as decoding proof.
+- Updated compatible reference library: the same 48 A-JOC 1500 packets produce
+  98304 stereo samples per channel, peak 0.03873. The 448 kbit/s tier also
+  passes the same 48-packet run, peak 0.03738. This establishes usable
+  nonzero reference output; it does not establish Rust reconstruction parity.
+  The consumed-byte ABI changed from a 32-bit to a 64-bit pointer. The runner
+  accepts both and validates actual PCM rather than return codes alone.
 
 ## In progress
 
@@ -91,3 +100,45 @@ WAV hash changed only with the new header: `e7dfdb1699975db6fffc8904e8fb0a5f`
 → `00977d662f40f6079a6fba2882ba45c3`. The regression baseline is updated after
 verifying its previous hash against the control executable. External inspection
 recognizes the new 5.1 file as float PCM with the `5.1(side)` layout.
+
+## Validation commands
+
+- `cargo test --release --locked`: unit, generated A-JOC, malformed input,
+  history reset and transform allocation checks.
+- `cargo clippy --release --locked --all-targets -- -D warnings`.
+- `BAKA_AC4_IMMERSIVE_DIR=<local-directory> cargo test --release --locked
+  -p baka-ac4-cli --test immersive -- --ignored --nocapture`: both real A-JOC
+  tiers passed all-frame finite PCM and layout assertions.
+- `python tools/regression.py --skip-fuzz`: local decode baselines and SSF
+  mutation differential (114.86–118.66 dB on the tested mutations). Full fuzz
+  was run separately through the Cargo test command.
+
+Removed redundant homepage metadata which produced manifest warnings and made
+the strict regression script reject an otherwise successful Clippy run.
+
+## Reference runner
+
+Export local packets with `tools/export_reference_packets.py input.mp4 packets.bin
+--limit 48`. Build `tools/reference_probe.c` using an Android ARM64 NDK compiler:
+
+```sh
+clang --target=aarch64-linux-android24 -O2 -Wall -Wextra -Werror tools/reference_probe.c -ldl -o reference_probe
+```
+
+Provide compatible external libraries on the test device, then run with a bounded
+host timeout and device-local paths:
+
+```sh
+LD_LIBRARY_PATH=. ./reference_probe ./reference.so packets.bin reference.s16le
+```
+
+Exit 0 means nonzero PCM was observed, 1 means a decoder error or all-zero output,
+and 2 means the harness/input/ABI was unavailable or invalid. Silence alone does
+not identify a codec failure; use a non-silent control from the same recording.
+No external binaries, recordings, URLs or credentials are redistributed here.
+
+Reference harness checks on Android cover both nonzero A-JOC tiers (exit 0),
+ordinary stereo control (exit 0), the old all-zero A-JOC result (exit 1), and a
+missing library (exit 2). Packet export was checked byte for byte against an
+independent ffprobe-driven export. The output file is created exclusively so
+existing input/output files cannot be overwritten by the reference runner.
