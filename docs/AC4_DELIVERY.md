@@ -128,8 +128,8 @@ The parser is bounded to 16 fullband downmix signals and 64 fullband objects;
 the existing core decoder supports at most 12 total input signals. Static/mixed
 assignments and alternative presentations are explicitly rejected in inspection
 mode. Object gain/position/zone/other metadata and per-object extended precision
-are now retained as described below; common-data trim/render extensions are
-still skipped. A damaged matrix payload
+are now retained as described below; shared trim controls are also decoded,
+while bed-render extension bits remain opaque. A damaged matrix payload
 cannot commit partial dialogue/coefficient history. Authored tests cover exact
 bit truncations, mutations, sparse resets, incompatible time history, quantizer
 wrap and frequency-to-time transitions. All codebook symbols are round-tripped.
@@ -223,7 +223,7 @@ rendering and independent gain/timing/position parity remain pending.
 ## Validation commands
 
 - `cargo test --release --locked`: unit, generated A-JOC, malformed input,
-  history reset and transform allocation checks (62 tests passed).
+  history reset and transform allocation checks (68 tests passed).
 - `cargo clippy --release --locked --all-targets -- -D warnings`.
 - `BAKA_AC4_IMMERSIVE_DIR=<local-directory> cargo test --release --locked
   -p baka-ac4-cli --test immersive -- --ignored --nocapture`: both real A-JOC
@@ -264,6 +264,36 @@ WAV files remain byte-identical to the preceding implementation on both tiers.
 
 Removed redundant homepage metadata which produced manifest warnings and made
 the strict regression script reject an otherwise successful Clippy run.
+
+## Shared rendering controls
+
+`AjocMetadata::common` now retains mastering screen ratio, bed-channel
+distribution, warp mode and all nine trim configurations. Gain code tables and
+signed front/back balances are decoded; absent fields, default and disabled
+trim modes and reserved codes remain distinct. Explicit screen ratio uses
+`(code + 1) / 33`, while its default flag means 1.0, per Part 2 clause 6.3.9.2.3.
+These values are exposed for a renderer; they are not applied by the basic
+X-axis stereo preview or raw object reconstruction.
+
+The same bounded parser handles inline substream-group controls and shared
+OAMD controls. Shared controls and timing commit together only after both parse
+successfully; absent shared controls retain the prior group values until reset
+or replacement. Additional-data lengths bound trim parsing independently of the
+outer packet. Remaining bed-render/future bits are retained MSB first with an
+exact bit count; semantic bed rendering remains pending.
+
+Both full recordings expose screen ratio 1.0, disabled bed-channel distribution,
+custom trim and 12 remaining extension bits. Shared controls are available in
+all 5025 frames per tier. Core, reconstructed objects and stereo-preview runs
+remain passing, with the same peaks and L/R difference measurements. Reset
+checks additionally compare shared controls with the first decoded frame.
+CLI object and stereo-preview float WAV exports of the first 48 packets remain
+byte-identical to the preceding implementation on both tiers.
+
+Six authored tests cover screen endpoints/defaults, all trim gain codes,
+global/configuration modes, reserved values, balance signs, nested length
+boundaries, extended byte counts, every-bit truncation and transactional history.
+Ordinary decoding baselines and SSF mutation checks remain unchanged.
 
 ## Reference runner
 

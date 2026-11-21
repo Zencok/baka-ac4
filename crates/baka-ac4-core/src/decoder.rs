@@ -510,6 +510,7 @@ pub struct SubstreamInfo {
     core_bed_mask: u64,
     dynamic_dmx: bool,
     dynamic_upmix: bool,
+    oamd_common: Option<crate::ajoc::common::CommonData>,
     n_fullband_upmix_signals: i32,
 
     n_objects: i32,
@@ -1555,24 +1556,6 @@ impl Ac4Decoder {
         Ok(0)
     }
 
-    fn ac4_oamd_common_data(&mut self, gb: &mut BitReader) {
-        if gb.get_bits1() == 0 {
-            // b_default_screen_size_ratio
-            gb.skip_bits(5); // master_screen_size_ratio_code
-        }
-
-        gb.skip_bits(1); // b_bed_object_chan_distribute
-
-        if gb.get_bits1() != 0 {
-            // b_additional_data
-            let mut add_data_bytes = gb.get_bits(1) as i64 + 1;
-            if add_data_bytes == 2 {
-                add_data_bytes += Self::variable_bits(gb, 2) as i64;
-            }
-            gb.skip_bits_long(add_data_bytes * 8);
-        }
-    }
-
     fn ac4_substream_info_ajoc(
         &mut self,
         gb: &mut BitReader,
@@ -1593,10 +1576,15 @@ impl Ac4Decoder {
             ssi.core_bed_mask = self.ac4_bed_dyn_obj_assignment(gb, n)?;
         }
 
-        if gb.get_bits1() != 0 {
+        ssi.oamd_common = if gb.get_bits1() != 0 {
             // b_oamd_common_data_present
-            self.ac4_oamd_common_data(gb);
-        }
+            let end = gb
+                .bits_count()
+                .saturating_add(gb.bits_left().max(0) as usize);
+            Some(crate::ajoc::common::parse(gb, end)?)
+        } else {
+            None
+        };
 
         ssi.n_fullband_upmix_signals = gb.get_bits(4) as i32 + 1;
         if ssi.n_fullband_upmix_signals == 16 {
@@ -6627,6 +6615,12 @@ impl Ac4Decoder {
 
         gb.skip_bits_long(self.st.payload_base as i64 * 8);
 
+        if ajoc_core
+            && self.ajoc_metadata_enabled
+            && let Some(common) = &self.st.ssgroup[0].ssinfo.oamd_common
+        {
+            self.st.ajoc_history.common = Some(common.clone());
+        }
         for i in 0..self.st.nb_substreams as usize {
             if ajoc_core {
                 let target = self.st.ssgroup[0].ssinfo.substream_index;

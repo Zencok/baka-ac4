@@ -36,6 +36,13 @@ Shared object timing is read from its declared substream. The supported profile
 uses dynamic-only assignments and a non-alternative presentation. Object-major
 `downmix_metadata` / `upmix_metadata` expose resolved gain, priority, position,
 zone and other property values with PCM update offsets and smoothing durations.
+`common` retains shared mastering screen ratio, bed-channel distribution and
+the nine trim configurations (gain, front/back balance and Y-warp controls).
+Default, disabled, custom, absent and reserved trim values remain distinct.
+Both inline group headers and the shared OAMD substream feed these controls;
+failed shared reads cannot commit partial controls or timing. Bed-render/future
+extension bits are retained separately. These controls are transport metadata
+and are not applied by the basic stereo preview.
 Absolute/differential positions retain their standard-precision history separately
 from extended precision. Position codes are room coordinates, not speaker labels.
 Disabling inspection retains core output. Metadata is cleared on flush, a failed

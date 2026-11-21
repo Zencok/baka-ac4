@@ -7,6 +7,7 @@ use crate::error::{Result, invalid};
 use crate::vlc::Vlc;
 use std::sync::OnceLock;
 
+pub mod common;
 pub mod decorrelation;
 pub mod oamd;
 pub mod reconstruction;
@@ -45,6 +46,8 @@ pub struct ObjectMatrix {
 /// A complete A-JOC reconstruction payload. LFE is separate from the matrices.
 #[derive(Clone, Debug, Default)]
 pub struct AjocMetadata {
+    /// Last shared rendering controls for the selected substream group.
+    pub common: Option<common::CommonData>,
     pub decorrelators: Vec<bool>,
     pub points: Vec<DataPoint>,
     pub objects: Vec<ObjectMatrix>,
@@ -62,6 +65,7 @@ pub struct AjocMetadata {
 
 #[derive(Clone, Default)]
 pub(crate) struct History {
+    pub common: Option<common::CommonData>,
     dialogue: usize,
     matrices: Vec<PreviousMatrix>,
     common_oamd: Vec<oamd::ObjectTiming>,
@@ -81,20 +85,12 @@ pub(crate) fn common_timing(
         return Err(invalid("truncated shared A-JOC metadata"));
     }
     let mut r = Reader { gb, end };
-    if r.flag()? {
-        if !r.flag()? {
-            r.get(5)?;
-        }
-        r.get(1)?;
-        if r.flag()? {
-            let mut bytes = r.get(1)? as usize + 1;
-            if bytes == 2 {
-                bytes += r.variable(2)?;
-            }
-            r.skip(bytes * 8)?;
-        }
+    let common = if r.flag()? { Some(r.common()?) } else { None };
+    let timing = if r.flag()? { r.timing()? } else { Vec::new() };
+    if let Some(common) = common {
+        history.common = Some(common);
     }
-    history.common_oamd = if r.flag()? { r.timing()? } else { Vec::new() };
+    history.common_oamd = timing;
     Ok(())
 }
 
@@ -462,6 +458,7 @@ fn parse_inner(
         previous.coarse = object.coarse;
     }
     Ok(AjocMetadata {
+        common: history.common.clone(),
         decorrelators,
         points,
         objects,

@@ -176,6 +176,8 @@ fn complete_ajoc_tiers_have_finite_core_pcm_and_honest_layouts() {
                 let mut positions = [f32::INFINITY; 3];
                 let mut position_max = [f32::NEG_INFINITY; 3];
                 let mut gains = (i16::MAX, i16::MIN);
+                let mut shared_frames = 0;
+                let mut first_common = None;
                 for (index, &(offset, size)) in track.samples.iter().enumerate() {
                     let packet = &bytes[offset as usize..offset as usize + size as usize];
                     let frame = decoder
@@ -196,6 +198,17 @@ fn complete_ajoc_tiers_have_finite_core_pcm_and_honest_layouts() {
                     assert_eq!(metadata.downmix_blocks, 1);
                     assert_eq!(metadata.upmix_blocks, 1);
                     assert_eq!(metadata.upmix_metadata.len(), 21);
+                    if let Some(common) = &metadata.common {
+                        shared_frames += 1;
+                        assert!(common.master_screen_ratio > 0.0 && common.master_screen_ratio <= 1.0);
+                        assert_eq!(common.additional_data.len(), common.additional_bits.div_ceil(8));
+                        if index == 0 {
+                            first_common = Some(common.clone());
+                            eprintln!("shared controls: screen {}, bed distribution {}, trim {:?}, opaque bits {}",
+                                common.master_screen_ratio, common.bed_channel_distribution,
+                                common.trim.as_ref().map(|t| t.global_mode), common.additional_bits);
+                        }
+                    }
                     for update in metadata.upmix_metadata.iter().flatten() {
                         assert!(update.timing.sample < frame.nb_samples as u16);
                         assert!(update.timing.ramp <= 2048);
@@ -244,6 +257,7 @@ fn complete_ajoc_tiers_have_finite_core_pcm_and_honest_layouts() {
                 assert!(peak > 0.01 && peak < 2.0, "{quality}: {peak}");
                 assert!(samples > 48000 * 100);
                 assert!(dt_count > 100000, "must exercise cross-frame time deltas");
+                assert_eq!(shared_frames, track.samples.len());
                 decoder.flush();
                 assert!(decoder.ajoc_metadata().is_none());
                 let mut qmf = Vec::new();
@@ -259,6 +273,7 @@ fn complete_ajoc_tiers_have_finite_core_pcm_and_honest_layouts() {
                         .is_some()
                 );
                 assert!(decoder.ajoc_metadata().is_some());
+                assert_eq!(decoder.ajoc_metadata().unwrap().common, first_common);
                 decoder.copy_ajoc_core_qmf(&mut qmf).unwrap();
                 assert_eq!(qmf.len(), signals - 1);
                 assert!(qmf.iter().all(|plane| plane.len() == 32));
@@ -278,6 +293,7 @@ fn complete_ajoc_tiers_have_finite_core_pcm_and_honest_layouts() {
                     "OAMD: gain {}..{} dB, positions {positions:?}..{position_max:?}",
                     gains.0, gains.1
                 );
+                eprintln!("shared OAMD controls available in {shared_frames} frames");
                 eprintln!(
                     "{quality}: {} frames, {samples} samples, {signals} signals, peak {peak}",
                     track.samples.len()
