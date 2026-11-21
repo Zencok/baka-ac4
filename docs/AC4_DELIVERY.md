@@ -43,17 +43,20 @@ not a runtime dependency or distributable library.
   release runs (1.990 s / 3.443 s; peaks 0.3866 / 0.3319). Numerical parity with
   reference core PCM is not yet established.
 - Raw object-signal reconstruction is implemented in the opt-in mode described
-  below; basic gain/X stereo projection is implemented separately, while full
-  spatial rendering and reference parity remain in progress.
+  below; basic gain/X stereo projection and a separate spatial speaker renderer
+  are implemented. Binaural rendering and reference parity remain in progress.
 - Reconstruction-matrix inspection now passes both complete recordings,
   including shared timing, cross-frame coefficient history and exact payload
   boundary assertions; see the reconstruction-parameters section below.
 
 ## Remaining acceptance
 
-- Apply the remaining Y/Z, zone/extent, screen/distance/divergence and trim
-  controls in defined immersive speaker/headphone outputs; compare against the
-  reference. Gain/position transport and basic stereo preview are implemented.
+- Spatial speaker output now applies Y/Z, zone/extent, screen/divergence and
+  trim controls to five defined layouts. Compare rendered PCM against an
+  independent reference; implement/validate binaural output separately.
+- Bed/mixed assignments, zone 6/7, 22.2/10.2 and 5.1.2/7.1.2 output layouts,
+  presentation loudness, optional dialogue enhancement and newer distance/
+  Y-warp/balance extensions remain outside the implemented rendering profile.
 - Validate full-song outputs, finite samples, seek/reset history, corrupted inputs
   and dynamic layout changes. Preserve ordinary stereo and broadcast regressions.
 - Complete ACPL/other multichannel gaps where actual streams expose them.
@@ -136,9 +139,9 @@ wrap and frequency-to-time transitions. All codebook symbols are round-tripped.
 
 Inspection-only output remains `AjocCoreSignals`. The separate object-signal
 mode below implements reconstruction. A separate basic stereo preview applies
-gain and X position. Full OAMD-driven rendering and comparison of rendered PCM
-against the working native reference remain pending. No player
-integration should advertise full A-JOC spatial playback from these milestones.
+gain and X position. The separate speaker renderer below applies spatial
+controls. Comparison of rendered PCM against the working native reference and
+headphone-specific rendering remain pending.
 
 ## A-JOC object-signal reconstruction
 
@@ -217,17 +220,20 @@ Raw object/core output and ordinary decoding regressions are retained separately
 
 This is not an immersive renderer or a claim of native-reference parity. It does
 not apply Y/Z, zone/extent, trims, screen/distance/divergence, presentation loudness,
-optional dialogue enhancement or binaural cues. Full metadata-driven immersive
-rendering and independent gain/timing/position parity remain pending.
+optional dialogue enhancement or binaural cues. The separate speaker mode below
+applies spatial metadata; independent native-reference parity remains pending.
 
 ## Validation commands
 
 - `cargo test --release --locked`: unit, generated A-JOC, malformed input,
-  history reset and transform allocation checks (68 tests passed).
+  history reset and transform allocation checks (79 tests passed).
 - `cargo clippy --release --locked --all-targets -- -D warnings`.
 - `BAKA_AC4_IMMERSIVE_DIR=<local-directory> cargo test --release --locked
   -p baka-ac4-cli --test immersive -- --ignored --nocapture`: both real A-JOC
   tiers passed all-frame finite PCM and layout assertions.
+- With the same sample-directory environment, `cargo test --release --locked
+  -p baka-ac4-cli --test speaker_render -- --ignored --nocapture` exercises all
+  five speaker layouts on both complete recordings.
 - `python tools/regression.py --skip-fuzz`: local decode baselines and SSF
   mutation differential (114.86–118.66 dB on the tested mutations). Full fuzz
   was run separately through the Cargo test command.
@@ -272,8 +278,8 @@ distribution, warp mode and all nine trim configurations. Gain code tables and
 signed front/back balances are decoded; absent fields, default and disabled
 trim modes and reserved codes remain distinct. Explicit screen ratio uses
 `(code + 1) / 33`, while its default flag means 1.0, per Part 2 clause 6.3.9.2.3.
-These values are exposed for a renderer; they are not applied by the basic
-X-axis stereo preview or raw object reconstruction.
+Trim values are applied in the speaker renderer below; they are not applied by
+the basic X-axis stereo preview or raw object reconstruction.
 
 The same bounded parser handles inline substream-group controls and shared
 OAMD controls. Shared controls and timing commit together only after both parse
@@ -294,6 +300,68 @@ Six authored tests cover screen endpoints/defaults, all trim gain codes,
 global/configuration modes, reserved values, balance signs, nested length
 boundaries, extended byte counts, every-bit truncation and transactional history.
 Ordinary decoding baselines and SSF mutation checks remain unchanged.
+
+## Spatial speaker rendering
+
+The explicit `set_ajoc_render(Some(RenderOptions::new(layout)))` API and CLI
+`--render=stereo|5.1|7.1|5.1.4|7.1.4` now convert reconstructed dynamic objects
+into labelled speaker feeds. `AjocSpeakerFeeds` distinguishes these from raw
+objects and the earlier X-only preview. Ordinary channel-coded streams retain
+their existing output. Selecting raw objects or preview disables speaker mode;
+disabling an active renderer retains raw object mode.
+
+The native Rust renderer implements TS 103 448 V1.1.1 clauses 5.1-5.5:
+screen-anchored coordinates with configurable playback geometry, zone/elevation
+constraints, ordered 22.2 snap targets, hierarchical XYZ point panning, size
+panning with a 20/20/8 virtual-source grid, divergence, default/custom trim,
+object gain and sample-timed ramps. Divergence code values use Part 2 table 145.
+Panner energy normalization is per object, not mix loudness normalization.
+
+https://www.etsi.org/deliver/etsi_ts/103400_103499/103448/01.01.01_60/ts_103448v010101p.pdf
+
+The ramp advances on its update sample and reaches its target in
+`ramp_duration + 1` samples, carrying across frames and accepting interruptions.
+The earlier explicitly basic preview keeps its prior ramp behavior and PCM.
+All renderer targets are checked before updating gain history. Invalid metadata
+clears output; arithmetic failure clears output and renderer history. A change
+in fullband/LFE identity requires reset even with the same total plane count.
+Decoder flush, changed options and failed packets clear renderer history;
+repeating identical options preserves it and invalid screen options do not
+change it. Screen geometry defaults to identity; mastering screen ratio and
+priority are ignored as directed by clause 5.1.5.
+
+Output is in ascending WAVE mask-bit order. LFE is discrete in surround modes;
+stereo uses an explicit 0.5-per-side fold without bass management. No loudness
+correction, dialogue enhancement, output normalization, limiting or HRTF cues
+are added. Unsupported assignments, zone 6/7 and reserved rendering codes fail
+explicitly. Missing custom trim gain fields contribute zero dB; missing trim
+metadata selects default trim. Extended positions are saturated to the supported
+room for panning; these layouts have no bottom plane. Distance/Y-warp/balance
+extensions remain metadata only. These boundaries are not a full AC-4 profile
+or native-reference parity claim.
+
+Both full recordings passed all 5025 frames in each of the five layouts, with
+finite samples and nonzero activity in every output channel. All ten runs
+passed exact first-six-frame flush/replay, repeated-option, mode-transition and
+failed-packet invalidation assertions. Eleven authored tests cover independent
+speaker-target/room-centre gains, energy/symmetry, zones/elevation, size and
+divergence, screen/snap, trim, LFE, update/cross-frame/interrupted ramps,
+inactive updates, malformed data, same-count layout changes and arithmetic reset.
+
+| Layout | Channels | WAVE mask | Peak 448 | Peak 1500 |
+| --- | --- | --- | --- | --- |
+| Stereo | 2 | 0x3 | 0.9651576 | 1.4981052 |
+| 5.1 | 6 | 0x60f | 1.3131899 | 2.2159247 |
+| 7.1 | 8 | 0x63f | 1.362176 | 2.1865153 |
+| 5.1.4 | 10 | 0x2d60f | 1.30799 | 2.191549 |
+| 7.1.4 | 12 | 0x2d63f | 1.3590834 | 2.189809 |
+
+These are host acceptance measurements. Rendered output parity, listening tests
+and mobile cost remain unverified. Use float WAV export to retain peaks above 1.
+CLI checks on the first 48 packets of each tier confirmed finite float WAV,
+channel counts, all five WAVE masks and all TOC output tags. Both previous raw
+object and X-only preview WAV baselines remain byte-identical. Enabling speaker
+mode on an ordinary channel-coded fixture also retains its complete WAV bytes.
 
 ## Reference runner
 

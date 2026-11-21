@@ -11,6 +11,7 @@ pub mod common;
 pub mod decorrelation;
 pub mod oamd;
 pub mod reconstruction;
+pub mod render;
 pub(crate) mod signals;
 pub mod stereo;
 

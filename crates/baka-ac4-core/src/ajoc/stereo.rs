@@ -121,7 +121,7 @@ impl StereoPreview {
     }
 }
 
-fn validate(metadata: &AjocMetadata, objects: &[Vec<f32>]) -> Result<()> {
+pub(super) fn validate(metadata: &AjocMetadata, objects: &[Vec<f32>]) -> Result<()> {
     if !(1..=65).contains(&objects.len())
         || !(1..=64).contains(&metadata.objects.len())
         || objects.len() != metadata.upmix_metadata.len()

@@ -966,6 +966,8 @@ pub enum AudioKind {
     AjocObjectSignals,
     /// Basic gain/X-position stereo projection; not an immersive renderer.
     AjocStereoPreview,
+    /// Object audio rendered to the configured WAVE speaker layout.
+    AjocSpeakerFeeds,
 }
 
 /// Layout information returned by [`Ac4Decoder::decode_frame_into`] when a
@@ -1019,6 +1021,7 @@ pub struct Ac4Decoder {
     ajoc_metadata_enabled: bool,
     ajoc_objects: bool,
     ajoc_preview: bool,
+    ajoc_render: Option<crate::ajoc::render::RenderOptions>,
     ajoc_metadata: Option<crate::ajoc::AjocMetadata>,
     ajoc_qmf_available: bool,
     variable_pairs: Vec<(usize, usize)>,
@@ -1042,6 +1045,7 @@ impl Ac4Decoder {
             ajoc_metadata_enabled: false,
             ajoc_objects: false,
             ajoc_preview: false,
+            ajoc_render: None,
             ajoc_metadata: None,
             ajoc_qmf_available: false,
             variable_pairs: Vec::with_capacity(6),
@@ -6715,18 +6719,30 @@ impl Ac4Decoder {
                     .ok_or_else(|| invalid("missing A-JOC matrices"))?,
                 &core,
                 has_lfe.then_some(&lfe[..nb_samples]),
-                self.ajoc_preview,
+                if let Some(options) = self.ajoc_render {
+                    crate::ajoc::signals::ObjectOutput::Speakers(options)
+                } else if self.ajoc_preview {
+                    crate::ajoc::signals::ObjectOutput::Preview
+                } else {
+                    crate::ajoc::signals::ObjectOutput::Raw
+                },
                 data,
             )?;
             self.st.first_frame = 0;
             return Ok(Some(FrameInfo {
-                audio_kind: if self.ajoc_preview {
+                audio_kind: if self.ajoc_render.is_some() {
+                    AudioKind::AjocSpeakerFeeds
+                } else if self.ajoc_preview {
                     AudioKind::AjocStereoPreview
                 } else {
                     AudioKind::AjocObjectSignals
                 },
                 sample_rate: sample_rate as u32,
-                channel_mask: if self.ajoc_preview { 3 } else { 0 },
+                channel_mask: self
+                    .ajoc_render
+                    .map_or(if self.ajoc_preview { 3 } else { 0 }, |o| {
+                        o.layout.channel_mask()
+                    }),
                 nb_samples,
                 key_frame: self.st.iframe_global != 0,
             }));
@@ -6785,6 +6801,7 @@ impl Ac4Decoder {
             if !enable {
                 self.ajoc_objects = false;
                 self.ajoc_preview = false;
+                self.ajoc_render = None;
                 self.ajoc_metadata_enabled = false;
             }
             self.flush();
@@ -6803,6 +6820,7 @@ impl Ac4Decoder {
             if !enable {
                 self.ajoc_objects = false;
                 self.ajoc_preview = false;
+                self.ajoc_render = None;
             }
             self.flush();
         }
@@ -6819,8 +6837,9 @@ impl Ac4Decoder {
     /// AjocObjectSignals. OAMD gain/position rendering and dialogue enhancement
     /// are not applied. Not a headphone/speaker playback mode.
     pub fn set_ajoc_object_signals(&mut self, enable: bool) {
-        let was_preview = self.ajoc_preview;
+        let was_preview = self.ajoc_preview || self.ajoc_render.is_some();
         self.ajoc_preview = false;
+        self.ajoc_render = None;
         if enable {
             self.set_ajoc_metadata(true);
         }
@@ -6843,6 +6862,28 @@ impl Ac4Decoder {
         }
         self.ajoc_preview = enable;
         self.flush();
+    }
+
+    /// Render dynamic A-JOC objects to speaker feeds. Configuration changes
+    /// reset all decoding/render history. None retains raw object mode.
+    /// Ordinary channel-coded streams retain their original layout. This is
+    /// speaker rendering, without HRTF, loudness correction or bass management.
+    pub fn set_ajoc_render(
+        &mut self,
+        options: Option<crate::ajoc::render::RenderOptions>,
+    ) -> Result<()> {
+        if let Some(options) = options {
+            options.validate()?;
+        }
+        if self.ajoc_render == options {
+            return Ok(());
+        }
+        if options.is_some() {
+            self.set_ajoc_object_signals(true);
+        }
+        self.ajoc_render = options;
+        self.flush();
+        Ok(())
     }
 
     /// Copy the last inspected A-JOC frame's fullband core QMF planes, in

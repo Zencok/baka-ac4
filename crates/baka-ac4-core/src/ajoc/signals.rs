@@ -6,6 +6,12 @@ use super::reconstruction::{QmfPlanes, QmfSlot, Reconstructor};
 use crate::error::{Result, invalid};
 use crate::qmf::QmfSynthesis;
 
+pub(crate) enum ObjectOutput {
+    Raw,
+    Preview,
+    Speakers(super::render::RenderOptions),
+}
+
 #[derive(Default)]
 pub(crate) struct ObjectDecoder {
     matrix: Reconstructor,
@@ -14,6 +20,7 @@ pub(crate) struct ObjectDecoder {
     history: Vec<[f32; 1280]>,
     preview: super::stereo::StereoPreview,
     object_pcm: Vec<Vec<f32>>,
+    renderer: Option<super::render::SpeakerRenderer>,
 }
 
 impl ObjectDecoder {
@@ -23,7 +30,7 @@ impl ObjectDecoder {
         metadata: &AjocMetadata,
         core: &[Vec<QmfSlot>],
         lfe: Option<&[f32]>,
-        preview: bool,
+        mode: ObjectOutput,
         output: &mut Vec<Vec<f32>>,
     ) -> Result<()> {
         self.matrix
@@ -35,7 +42,8 @@ impl ObjectDecoder {
             return Err(invalid("A-JOC LFE plane"));
         }
         self.history.resize(objects, [0.0; 1280]);
-        let object_pcm = if preview {
+        let rendered = !matches!(mode, ObjectOutput::Raw);
+        let object_pcm = if rendered {
             &mut self.object_pcm
         } else {
             &mut *output
@@ -59,9 +67,21 @@ impl ObjectDecoder {
                 object_pcm[first + object][ts * 64..(ts + 1) * 64].copy_from_slice(&pcm);
             }
         }
-        if preview {
-            self.preview
-                .process_into(metadata, &self.object_pcm, output)?;
+        match mode {
+            ObjectOutput::Raw => {}
+            ObjectOutput::Preview => {
+                self.preview
+                    .process_into(metadata, &self.object_pcm, output)?
+            }
+            ObjectOutput::Speakers(options) => {
+                if self.renderer.is_none() {
+                    self.renderer = Some(super::render::SpeakerRenderer::new(options)?);
+                }
+                self.renderer
+                    .as_mut()
+                    .unwrap()
+                    .process_into(metadata, &self.object_pcm, output)?;
+            }
         }
         Ok(())
     }

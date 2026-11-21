@@ -90,7 +90,8 @@ pub fn decode_packets(packets: &[Vec<u8>]) -> Result<()> {
 | A-JOC 对象信号重建 | 显式启用 `set_ajoc_object_signals(true)` 或 CLI `--object-signals`；已实现 QMF 矩阵、去相关、瞬态抑制和对象 PCM |
 | A-JOC 对象属性 | `ajoc_metadata()` 提供增益、绝对／差分／扩展精度位置及采样级时序 |
 | A-JOC 双声道预览 | 显式启用 `set_ajoc_stereo_preview(true)` 或 CLI `--stereo-preview`，应用增益和左右位置 |
-| A-JOC 沉浸式扬声器／耳机渲染 | 待完成完整空间属性、双耳渲染及参考 PCM 一致性验证 |
+| A-JOC 扬声器渲染 | `set_ajoc_render(...)` / CLI `--render=...`；动态对象可输出立体声、5.1、7.1、5.1.4 和 7.1.4 |
+| A-JOC 双耳渲染及参考一致性 | 尚未完成；扬声器信号不等于 HRTF 耳机输出 |
 
 尚未验证所有 AC-4 profile 和声道布局。CLI 使用 WAVE_FORMAT_EXTENSIBLE 保留多声道掩码；未锚定的核心信号保持零掩码，不会据此猜测扬声器布局。
 
@@ -110,6 +111,12 @@ A-JOC 核心信号通过 `AudioKind::AjocCoreSignals` 标识。`channel_mask == 
 不能视为完整沉浸式渲染。输出不做归一化或限幅；各 A-JOC 输出模式互斥，预览不能与 `--fast` 同用。
 
 ## 播放器集成
+
+`baka-ac4 decode --render=7.1.4 --f32 input.mp4 speakers.wav` 可将动态对象渲染为扬声器信号，
+也可选择 `stereo`、`5.1`、`7.1` 或 `5.1.4`。该路径应用三维位置、尺寸、散布、区域限制、
+吸附、屏幕映射、trim 和逐采样渐变；输出为 `AjocSpeakerFeeds`，按 WAVE 通道掩码顺序排列。
+立体声将 LFE 以每侧 0.5 混入，环绕输出保留独立 LFE。输出未限幅，建议使用浮点 WAV。
+耳机 HRTF、呈现响度处理及参考 PCM 一致性仍未完成，具体边界见 [交付记录](docs/AC4_DELIVERY.md)。
 
 把 `baka-ac4-core` 用作解码层，由播放器继续负责来源读取、解复用、时间戳和音频输出。系统支持当前码流时优先使用系统解码器，不支持时再启用 Rust 解码。
 

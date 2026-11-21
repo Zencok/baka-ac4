@@ -90,7 +90,8 @@ Packets may include the `0xAC40` / `0xAC41` sync header. The decoder returns `Ok
 | A-JOC object signal reconstruction | Opt-in `set_ajoc_object_signals(true)` / CLI `--object-signals`; QMF matrices, decorrelation/ducking and object PCM |
 | A-JOC object properties | Resolved gain, absolute/differential/extended position and sample timing via `ajoc_metadata()` |
 | A-JOC stereo preview | Explicit `set_ajoc_stereo_preview(true)` / CLI `--stereo-preview`; gain and X-position projection |
-| A-JOC immersive speaker/headphone rendering | Pending; full spatial controls, binaural rendering and reference PCM parity are not established |
+| A-JOC speaker rendering | `set_ajoc_render(...)` / CLI `--render=...`; stereo, 5.1, 7.1, 5.1.4 and 7.1.4 dynamic-object outputs |
+| A-JOC binaural rendering / reference parity | Not established; speaker feeds are not HRTF headphone output |
 
 Not every AC-4 profile or channel layout has been validated. The CLI preserves multichannel speaker masks in WAVE_FORMAT_EXTENSIBLE output. Unanchored core signals retain a zero mask.
 
@@ -115,6 +116,15 @@ claim reference-equivalent immersive rendering. No limiter or normalization is
 applied. Select only one A-JOC output mode; preview also requires full QMF.
 
 ## Integration
+
+`baka-ac4 decode --render=7.1.4 --f32 input.mp4 speakers.wav` renders dynamic
+objects using three-axis panning, size/divergence, screen mapping, zones, snap,
+trim and sample-timed ramps. Other choices are `stereo`, `5.1`, `7.1`, `5.1.4`.
+Output kind is `AjocSpeakerFeeds`, in ascending WAVE speaker-mask order. There
+is no limiter or presentation loudness processing; float PCM may exceed unity.
+Stereo folds LFE at 0.5 per side; surround retains a discrete LFE channel.
+This mode requires full QMF and cannot be combined with other A-JOC modes.
+See [delivery status](docs/AC4_DELIVERY.md) for supported metadata and validation limits.
 
 Use `baka-ac4-core` as the codec layer and keep source access, demuxing, timestamps and audio output in your player. Prefer the system decoder when it supports the stream; use Rust decoding when it does not.
 

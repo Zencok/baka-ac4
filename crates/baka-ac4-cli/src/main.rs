@@ -9,6 +9,7 @@ use std::io::BufWriter;
 use std::process::ExitCode;
 
 use baka_ac4_core::StreamFeatures;
+use baka_ac4_core::ajoc::render::{RenderOptions, SpeakerLayout};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Copy)]
@@ -17,6 +18,7 @@ enum SignalOutput {
     Core,
     Objects,
     StereoPreview,
+    Speakers(SpeakerLayout),
 }
 
 impl SignalOutput {
@@ -26,6 +28,9 @@ impl SignalOutput {
             Self::Core => decoder.set_ajoc_core_signals(true),
             Self::Objects => decoder.set_ajoc_object_signals(true),
             Self::StereoPreview => decoder.set_ajoc_stereo_preview(true),
+            Self::Speakers(layout) => decoder
+                .set_ajoc_render(Some(RenderOptions::new(layout)))
+                .expect("built-in screen geometry is valid"),
         }
     }
 }
@@ -56,18 +61,42 @@ fn run() -> ExitCode {
     let core = std::env::args().any(|a| a == "--core-signals");
     let objects = std::env::args().any(|a| a == "--object-signals");
     let preview = std::env::args().any(|a| a == "--stereo-preview");
+    let render_args = std::env::args()
+        .filter(|a| a.starts_with("--render"))
+        .collect::<Vec<_>>();
+    let mut render = None;
+    for arg in &render_args {
+        render = Some(match arg.as_str() {
+            "--render=stereo" => SpeakerLayout::Stereo,
+            "--render=5.1" => SpeakerLayout::Surround51,
+            "--render=7.1" => SpeakerLayout::Surround71,
+            "--render=5.1.4" => SpeakerLayout::Surround514,
+            "--render=7.1.4" => SpeakerLayout::Surround714,
+            _ => {
+                eprintln!("error: --render requires stereo, 5.1, 7.1, 5.1.4 or 7.1.4");
+                return ExitCode::FAILURE;
+            }
+        });
+    }
     let args: Vec<String> = std::env::args()
-        .filter(|a| a != "--core-signals" && a != "--object-signals" && a != "--stereo-preview")
+        .filter(|a| {
+            a != "--core-signals"
+                && a != "--object-signals"
+                && a != "--stereo-preview"
+                && !a.starts_with("--render")
+        })
         .collect();
-    if usize::from(core) + usize::from(objects) + usize::from(preview) > 1 {
-        eprintln!("error: choose one of --core-signals, --object-signals or --stereo-preview");
+    if usize::from(core) + usize::from(objects) + usize::from(preview) + render_args.len() > 1 {
+        eprintln!("error: choose one A-JOC output mode");
         return ExitCode::FAILURE;
     }
-    if (objects || preview) && args.iter().any(|a| a == "--fast") {
+    if (objects || preview || render.is_some()) && args.iter().any(|a| a == "--fast") {
         eprintln!("error: object reconstruction requires full QMF processing; remove --fast");
         return ExitCode::FAILURE;
     }
-    let signals = if preview {
+    let signals = if let Some(layout) = render {
+        SignalOutput::Speakers(layout)
+    } else if preview {
         SignalOutput::StereoPreview
     } else if objects {
         SignalOutput::Objects
@@ -190,6 +219,9 @@ fn usage() -> ExitCode {
     eprintln!(
         "optional: --stereo-preview projects A-JOC objects to stereo using gain and X position only"
     );
+    eprintln!(
+        "optional: --render=stereo|5.1|7.1|5.1.4|7.1.4 renders dynamic A-JOC objects to speaker feeds"
+    );
     eprintln!("usage: baka-ac4 toc <input.mp4 | input.ac4>");
     eprintln!("       baka-ac4 decode [--fast] [--f32] <input.mp4 | input.ac4> <output.wav>");
     eprintln!("       --fast skips the QMF round trip for simple streams (slightly");
@@ -256,6 +288,7 @@ fn toc(path: &str, signals: SignalOutput) -> ExitCode {
                         baka_ac4_core::AudioKind::AjocCoreSignals => "ajoc-core-signals",
                         baka_ac4_core::AudioKind::AjocObjectSignals => "ajoc-object-signals",
                         baka_ac4_core::AudioKind::AjocStereoPreview => "ajoc-stereo-preview",
+                        baka_ac4_core::AudioKind::AjocSpeakerFeeds => "ajoc-speaker-feeds",
                         baka_ac4_core::AudioKind::Channels => "channels",
                     },
                     feats.spec_frontend_l,
