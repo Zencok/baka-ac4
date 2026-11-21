@@ -17,9 +17,12 @@ fn complete_ajoc_tiers_have_finite_core_pcm_and_honest_layouts() {
                 assert!(track.samples.len() > 1000);
                 let mut decoder = Ac4Decoder::new().unwrap();
                 decoder.set_ajoc_core_signals(true);
+                decoder.set_ajoc_metadata(true);
                 let mut pcm = Vec::new();
                 let mut peak = 0.0f32;
                 let mut samples = 0usize;
+                let mut max_padding = 0;
+                let mut dt_count = 0;
                 for (index, &(offset, size)) in track.samples.iter().enumerate() {
                     let packet = &bytes[offset as usize..offset as usize + size as usize];
                     let frame = decoder
@@ -30,6 +33,37 @@ fn complete_ajoc_tiers_have_finite_core_pcm_and_honest_layouts() {
                     assert_eq!(frame.channel_mask, 0);
                     assert_eq!(frame.sample_rate, 48000);
                     assert_eq!(pcm.len(), signals);
+                    let metadata = decoder.ajoc_metadata().expect("requested A-JOC metadata");
+                    assert_eq!(metadata.objects.len(), 20);
+                    assert!(metadata.bits > 20);
+                    assert!(
+                        metadata.padding_bits <= 7,
+                        "{quality} frame {index}: unparsed metadata"
+                    );
+                    assert_eq!(metadata.downmix_blocks, 1);
+                    assert_eq!(metadata.upmix_blocks, 1);
+                    assert_eq!(metadata.decorrelators, [true, true, true]);
+                    for object in metadata.objects.iter().filter(|o| o.present) {
+                        assert_eq!(object.bands, if signals == 8 { 12 } else { 23 });
+                        for matrix in object.dry.iter().chain(&object.wet).flatten().flatten() {
+                            assert_eq!(matrix.gains.len(), object.bands);
+                            assert!(
+                                matrix
+                                    .gains
+                                    .iter()
+                                    .all(|x| x.is_finite() && x.abs() <= 5.005)
+                            );
+                        }
+                    }
+                    max_padding = max_padding.max(metadata.padding_bits);
+                    dt_count += metadata
+                        .objects
+                        .iter()
+                        .flat_map(|o| o.dry.iter().chain(&o.wet))
+                        .flatten()
+                        .flatten()
+                        .filter(|m| m.time_delta)
+                        .count();
                     for channel in &pcm {
                         assert_eq!(channel.len(), frame.nb_samples);
                         for &x in channel {
@@ -41,6 +75,25 @@ fn complete_ajoc_tiers_have_finite_core_pcm_and_honest_layouts() {
                 }
                 assert!(peak > 0.01 && peak < 2.0, "{quality}: {peak}");
                 assert!(samples > 48000 * 100);
+                assert!(dt_count > 100000, "must exercise cross-frame time deltas");
+                decoder.flush();
+                assert!(decoder.ajoc_metadata().is_none());
+                let (offset, size) = track.samples[0];
+                assert!(
+                    decoder
+                        .decode_frame_into(
+                            &bytes[offset as usize..offset as usize + size as usize],
+                            &mut pcm
+                        )
+                        .unwrap()
+                        .is_some()
+                );
+                assert!(decoder.ajoc_metadata().is_some());
+                assert!(decoder.decode_frame_into(&[0; 7], &mut pcm).is_err());
+                assert!(decoder.ajoc_metadata().is_none());
+                eprintln!(
+                    "metadata: padding <= {max_padding} bits, {dt_count} time-delta elements"
+                );
                 eprintln!(
                     "{quality}: {} frames, {samples} samples, {signals} signals, peak {peak}",
                     track.samples.len()

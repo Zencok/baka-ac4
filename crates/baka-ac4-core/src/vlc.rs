@@ -77,7 +77,7 @@ impl Vlc {
             if b == 0 {
                 continue;
             }
-            if b > 24 {
+            if b > 32 {
                 return Err(invalid("vlc: bad code length"));
             }
             if (b as u32) < 32 && c >= (1u32 << b) {
@@ -183,9 +183,9 @@ mod tests {
 
     #[test]
     fn long_codes_match_linear_reference_including_invalid_prefixes() {
-        let bits: Vec<u8> = (1..=24).collect();
-        let codes: Vec<u32> = bits.iter().map(|&n| (1u32 << n) - 2).collect();
-        let symbols: Vec<i32> = (0..24).map(|n| n - 12).collect();
+        let bits: Vec<u8> = (1..=32).collect();
+        let codes: Vec<u32> = bits.iter().map(|&n| (u32::MAX >> (32 - n)) - 1).collect();
+        let symbols: Vec<i32> = (0..32).map(|n| n - 12).collect();
         let vlc = Vlc::with_symbols(&bits, &codes, &symbols).unwrap();
         let mut inputs = codes
             .iter()
@@ -206,7 +206,7 @@ mod tests {
             let mut reference = BitReader::new(&data);
             let mut code = 0;
             let mut expected = None;
-            for length in 1..=24 {
+            for length in 1..=32 {
                 code = (code << 1) | reference.get_bits1();
                 expected = bits
                     .iter()

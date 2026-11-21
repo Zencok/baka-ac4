@@ -86,6 +86,7 @@ pub fn decode_packets(packets: &[Vec<u8>]) -> Result<()> {
 | SSF | 已实现，通过受控码流变异测试 |
 | ACPL | 已实现相关路径，成功解码仍需真实码流验证 |
 | A-JOC 核心下混信号 | 显式启用 `set_ajoc_core_signals(true)` 或 CLI `--core-signals`，已测试 448/1500 kbit/s 样本 |
+| A-JOC 重建矩阵 | 显式启用 `set_ajoc_metadata(true)`；有界解析、差分恢复与反量化，PCM 仍为核心信号 |
 | 对象重建 / A-JOC 对象渲染 | 尚不支持，核心信号不能当作已渲染的扬声器输出 |
 
 尚未验证所有 AC-4 profile 和声道布局。CLI 使用 WAVE_FORMAT_EXTENSIBLE 保留多声道掩码；未锚定的核心信号保持零掩码，不会据此猜测扬声器布局。

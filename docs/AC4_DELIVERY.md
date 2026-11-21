@@ -43,6 +43,9 @@ not a runtime dependency or distributable library.
   release runs (1.990 s / 3.443 s; peaks 0.3866 / 0.3319). Numerical parity with
   reference core PCM is not yet established.
 - Full reconstruction and metadata rendering remain in progress.
+- Reconstruction-matrix inspection now passes both complete recordings,
+  including shared timing, cross-frame coefficient history and exact payload
+  boundary assertions; see the reconstruction-parameters section below.
 
 ## Remaining acceptance
 
@@ -101,10 +104,41 @@ WAV hash changed only with the new header: `e7dfdb1699975db6fffc8904e8fb0a5f`
 verifying its previous hash against the control executable. External inspection
 recognizes the new 5.1 file as float PCM with the `5.1(side)` layout.
 
+## A-JOC reconstruction parameters
+
+The opt-in `set_ajoc_metadata(true)` path parses the shared OAMD timing substream,
+downmix/upmix object blocks, A-JOC dry/wet matrix masks and all twelve normative
+Huffman codebooks. It reconstructs frequency deltas modulo the quantizer range,
+time deltas against the previous data point (including across frames), sparse
+zero coefficients, and fine/coarse dequantized matrix gains. The long-code VLC
+path now accepts up to 32 bits; the A-JOC codebooks require up to 29.
+
+On the two local complete recordings, all 5025 frames per tier parse to within
+0–7 fill bits of the declared audio boundary. Both contain three enabled
+decorrelators and up to 20 fullband objects, plus separate LFE. The 448 tier uses
+12 parameter bands and exercises 505784 time-delta matrix elements; the 1500
+tier uses 23 bands and exercises 668513. Tests assert these structural properties,
+matrix gain bounds, exact plane meaning, and metadata invalidation on flush or
+decode errors. These are bitstream consistency checks, not reference PCM parity.
+
+The parser is bounded to 16 fullband downmix signals and 64 fullband objects;
+the existing core decoder supports at most 12 total input signals. Static/mixed
+assignments and alternative presentations are explicitly rejected in inspection
+mode. Object position/zone/other metadata and length-delimited extensions are
+traversed, without claiming their rendering semantics. A damaged matrix payload
+cannot commit partial dialogue/coefficient history. Authored tests cover exact
+bit truncations, mutations, sparse resets, incompatible time history, quantizer
+wrap and frequency-to-time transitions. All codebook symbols are round-tripped.
+
+Output remains `AjocCoreSignals`. QMF interpolation, decorrelation/transient
+ducking, object audio reconstruction, OAMD-driven rendering and comparison of
+rendered PCM against the working native reference remain pending. No player
+integration should advertise full A-JOC spatial playback from this milestone.
+
 ## Validation commands
 
 - `cargo test --release --locked`: unit, generated A-JOC, malformed input,
-  history reset and transform allocation checks.
+  history reset and transform allocation checks (41 tests passed).
 - `cargo clippy --release --locked --all-targets -- -D warnings`.
 - `BAKA_AC4_IMMERSIVE_DIR=<local-directory> cargo test --release --locked
   -p baka-ac4-cli --test immersive -- --ignored --nocapture`: both real A-JOC
@@ -112,6 +146,14 @@ recognizes the new 5.1 file as float PCM with the `5.1(side)` layout.
 - `python tools/regression.py --skip-fuzz`: local decode baselines and SSF
   mutation differential (114.86–118.66 dB on the tested mutations). Full fuzz
   was run separately through the Cargo test command.
+
+The five new authored matrix tests include all twelve Huffman codebooks, whose
+longest code is 29 bits. The optional full-song test additionally verifies the
+metadata path and its flush/error invalidation. Ordinary decoding baselines
+remain byte-identical. Supplementary change/quality checks were used; the
+available generic security scanner does not scan Rust, so its empty result is
+not security evidence. Reader bounds, bounded dimensions and transactional
+coefficient history were reviewed directly and exercised by the Rust tests.
 
 Removed redundant homepage metadata which produced manifest warnings and made
 the strict regression script reject an otherwise successful Clippy run.

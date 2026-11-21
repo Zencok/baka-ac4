@@ -27,6 +27,17 @@ Channel-coded audio, ASF/SSF, QMF and A-SPX paths are implemented. A-JOC downmix
 are unanchored signals and must not be assigned speaker positions by count.
 Object reconstruction/rendering is unsupported, and ACPL successful decoding still needs real-stream validation. Full QMF processing is enabled by default.
 
+For A-JOC matrix inspection, call `set_ajoc_metadata(true)` before decoding and
+read `ajoc_metadata()` after a successful frame. This also enables core signal
+output. The metadata includes dry/wet matrices, frequency/time differential
+decoding, dequantized gains, QMF update ramps and payload boundary accounting.
+Shared object timing is read from its declared substream. The supported profile
+uses dynamic-only assignments and a non-alternative presentation; object position
+and rendering properties are traversed for alignment, not exposed or rendered.
+Disabling inspection retains core output. Metadata is cleared on flush, a failed
+packet or a packet that produces no A-JOC frame. Inspection allocates parameter
+storage and is not the allocation-free playback path.
+
 The host owns source access, demuxing, timestamps, seek pre-roll and audio output. `flush()` clears all stream histories and waits for a fresh iframe. Transform plans
 and output options are preserved. Call it on the control path because it allocates
 fresh channel history; it is not a real-time PCM callback operation.

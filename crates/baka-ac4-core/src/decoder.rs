@@ -508,6 +508,8 @@ pub struct SubstreamInfo {
     audio_ndot: [i32; 4],
     n_fullband_dmx_signals: i32,
     core_bed_mask: u64,
+    dynamic_dmx: bool,
+    dynamic_upmix: bool,
     n_fullband_upmix_signals: i32,
 
     n_objects: i32,
@@ -521,6 +523,7 @@ pub struct SubstreamGroupInfo {
     channel_coded: i32,
     ajoc: i32,
     group_index: i32,
+    oamd_index: Option<i32>,
     ssinfo: SubstreamInfo,
 }
 
@@ -905,6 +908,7 @@ pub struct State {
     pinfo: [PresentationInfo; 16],
     ssgroup: [SubstreamGroupInfo; 16],
     substream: Substream,
+    ajoc_history: crate::ajoc::History,
 }
 
 impl Default for State {
@@ -943,6 +947,7 @@ impl Default for State {
             pinfo: std::array::from_fn(|_| PresentationInfo::default()),
             ssgroup: std::array::from_fn(|_| SubstreamGroupInfo::default()),
             substream: Substream::default(),
+            ajoc_history: crate::ajoc::History::default(),
         }
     }
 }
@@ -1004,6 +1009,8 @@ pub struct Ac4Decoder {
     /// streams).
     qmf_bypass: bool,
     ajoc_core: bool,
+    ajoc_metadata_enabled: bool,
+    ajoc_metadata: Option<crate::ajoc::AjocMetadata>,
     variable_pairs: Vec<(usize, usize)>,
 }
 
@@ -1022,6 +1029,8 @@ impl Ac4Decoder {
         Ok(Ac4Decoder {
             qmf_bypass: false,
             ajoc_core: false,
+            ajoc_metadata_enabled: false,
+            ajoc_metadata: None,
             variable_pairs: Vec::with_capacity(6),
             tables: Tables {
                 qmf_ana: QmfAnalysis::new(),
@@ -1408,18 +1417,20 @@ impl Ac4Decoder {
         Ok(())
     }
 
-    fn oamd_substream_info(&mut self, gb: &mut BitReader, substreams_present: bool) -> Result<()> {
+    fn oamd_substream_info(
+        &mut self,
+        gb: &mut BitReader,
+        substreams_present: bool,
+    ) -> Result<Option<i32>> {
         gb.skip_bits(1);
         if substreams_present {
             let mut substream_index = gb.get_bits(2) as i32;
             if substream_index == 3 {
                 substream_index += Self::variable_bits(gb, 2);
             }
-            // The accumulated substream_index is not needed here; the bit
-            // reads above are the side effect that matters.
-            let _ = substream_index;
+            return Ok(Some(substream_index));
         }
-        Ok(())
+        Ok(None)
     }
 
     fn ac4_substream_info_chan(
@@ -1558,6 +1569,7 @@ impl Ac4Decoder {
     ) -> Result<()> {
         ssi.lfe = gb.get_bits1() as i32;
         ssi.static_dmx = gb.get_bits1() as i32;
+        ssi.dynamic_dmx = false;
 
         if ssi.static_dmx != 0 {
             ssi.n_fullband_dmx_signals = 5;
@@ -1565,6 +1577,7 @@ impl Ac4Decoder {
         } else {
             ssi.n_fullband_dmx_signals = gb.get_bits(4) as i32 + 1;
             let n = ssi.n_fullband_dmx_signals;
+            ssi.dynamic_dmx = gb.peek_bits(1) != 0;
             ssi.core_bed_mask = self.ac4_bed_dyn_obj_assignment(gb, n)?;
         }
 
@@ -1583,6 +1596,7 @@ impl Ac4Decoder {
         }
 
         let n = ssi.n_fullband_upmix_signals;
+        ssi.dynamic_upmix = gb.peek_bits(1) != 0;
         let _ = self.ac4_bed_dyn_obj_assignment(gb, n)?;
 
         let fs_index = self.st.fs_index;
@@ -1714,6 +1728,7 @@ impl Ac4Decoder {
             return Err(unsupported("multiple object substreams in one group"));
         }
         self.st.ssgroup[g_idx].ajoc = 0;
+        self.st.ssgroup[g_idx].oamd_index = None;
         if self.st.ssgroup[g_idx].channel_coded != 0 {
             for _sus in 0..n_lf_substreams {
                 let sus_ver = if self.st.version == 1 {
@@ -1731,7 +1746,8 @@ impl Ac4Decoder {
             }
         } else {
             if gb.get_bits1() != 0 {
-                self.oamd_substream_info(gb, substreams_present)?;
+                self.st.ssgroup[g_idx].oamd_index =
+                    self.oamd_substream_info(gb, substreams_present)?;
             }
             for _sus in 0..n_lf_substreams {
                 if gb.get_bits1() != 0 {
@@ -4878,6 +4894,23 @@ impl Ac4Decoder {
                 }
                 self.variable_channel_element(gb, count, ssi.lfe != 0, iframe)?;
             }
+            if self.ajoc_metadata_enabled {
+                if self.st.pinfo[0].psinfo.alternative != 0 {
+                    return Err(unsupported("alternative A-JOC object metadata"));
+                }
+                if ssi.static_dmx != 0 || !ssi.dynamic_dmx || !ssi.dynamic_upmix {
+                    return Err(unsupported("A-JOC metadata assignment"));
+                }
+                self.ajoc_metadata = Some(crate::ajoc::parse(
+                    gb,
+                    (offset + audio_size) as usize * 8,
+                    ssi.n_fullband_dmx_signals as usize,
+                    ssi.n_fullband_upmix_signals as usize,
+                    ssi.lfe != 0,
+                    iframe != 0,
+                    &mut self.st.ajoc_history,
+                )?);
+            }
             // Core decoding ends after the downmix essence. The remaining
             // audio_size bytes contain reconstruction and object metadata.
             // They are bounded and skipped below, never treated as PCM.
@@ -6463,6 +6496,7 @@ impl Ac4Decoder {
         packet: &[u8],
         buf: &mut Vec<Vec<f32>>,
     ) -> Result<Option<FrameInfo>> {
+        self.ajoc_metadata = None;
         if packet.len() < 8 {
             return Err(invalid("invalid packet size"));
         }
@@ -6485,6 +6519,7 @@ impl Ac4Decoder {
         }
         let res = self.decode_frame_inner(&mut gb, buf);
         if res.is_err() {
+            self.ajoc_metadata = None;
             if crate::bitreader::trace_enabled() {
                 crate::bitreader::trace_dump();
             }
@@ -6598,6 +6633,13 @@ impl Ac4Decoder {
                 if self.st.substream_size[i] <= 0 {
                     return Err(invalid("missing preceding substream size"));
                 }
+                if self.ajoc_metadata_enabled && self.st.ssgroup[0].oamd_index == Some(i as i32) {
+                    let start = gb.bits_count();
+                    let end = start + self.st.substream_size[i] as usize * 8;
+                    crate::ajoc::common_timing(gb, end, &mut self.st.ajoc_history)?;
+                    gb.skip_bits_long((end - gb.bits_count()) as i64);
+                    continue;
+                }
                 gb.skip_bits_long(self.st.substream_size[i] as i64 * 8);
                 continue;
             }
@@ -6708,6 +6750,24 @@ impl Ac4Decoder {
         }
     }
 
+    /// Parse A-JOC reconstruction side information while returning core PCM.
+    /// Supports dynamic-only assignments; unsupported metadata returns an error.
+    /// This does not enable object reconstruction or spatial rendering.
+    pub fn set_ajoc_metadata(&mut self, enable: bool) {
+        if enable {
+            self.set_ajoc_core_signals(true);
+        }
+        if self.ajoc_metadata_enabled != enable {
+            self.ajoc_metadata_enabled = enable;
+            self.flush();
+        }
+    }
+
+    /// Reconstruction parameters from the last successful frame, if requested.
+    pub fn ajoc_metadata(&self) -> Option<&crate::ajoc::AjocMetadata> {
+        self.ajoc_metadata.as_ref()
+    }
+
     /// Enables or disables the QMF round-trip shortcut for simple streams
     /// (see [`Ac4Decoder`]). Off by default.
     pub fn set_qmf_bypass(&mut self, enable: bool) {
@@ -6733,6 +6793,7 @@ impl Ac4Decoder {
     pub fn flush(&mut self) {
         self.st = State::default();
         self.variable_pairs.clear();
+        self.ajoc_metadata = None;
     }
 }
 

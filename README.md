@@ -86,6 +86,7 @@ Packets may include the `0xAC40` / `0xAC41` sync header. The decoder returns `Ok
 | SSF | Implemented; tested with controlled stream mutations |
 | ACPL | Implemented paths; successful decoding still needs real-stream validation |
 | A-JOC core downmix signals | Explicit `set_ajoc_core_signals(true)` / CLI `--core-signals`; tested 448/1500 kbit/s streams |
+| A-JOC reconstruction matrices | Opt-in `set_ajoc_metadata(true)`; bounded parsing and differential/dequantized gains; core PCM output |
 | Object reconstruction / A-JOC object rendering | Not supported; raw core signals are not rendered speaker feeds |
 
 Not every AC-4 profile or channel layout has been validated. The CLI preserves multichannel speaker masks in WAVE_FORMAT_EXTENSIBLE output. Unanchored core signals retain a zero mask.

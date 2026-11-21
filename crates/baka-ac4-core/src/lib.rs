@@ -1,5 +1,7 @@
 //! baka-ac4-core — pure Rust Dolby AC-4 audio decoder.
 
+pub mod ajoc;
+mod ajoc_tables;
 pub mod bitreader;
 // The decoder uses index-based loops and multi-argument parse functions
 // throughout; silencing these lints crate-wide keeps the hot paths explicit.
