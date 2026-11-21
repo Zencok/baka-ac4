@@ -19,7 +19,9 @@ baka-ac4 bench input.mp4 10
   Unanchored planes have a zero speaker mask; they are not rendered surround feeds.
 - `bench` reports minimum and median decoding time. The optional round count defaults to 10 and accepts `1..=10000`.
 
-The CLI reads the input file into memory. It does not provide streaming playback or DRM decryption. Object-coded audio is unsupported; additional codec limitations are listed in the project documentation. Basic WAV headers do not preserve a full multichannel speaker mask.
+The CLI reads the input file into memory. It does not provide streaming playback or DRM decryption. Object-coded audio is unsupported; additional codec limitations are listed in the project documentation. Multichannel WAV output preserves the speaker mask using WAVE_FORMAT_EXTENSIBLE;
+unanchored core signals retain a zero mask. A format change or non-finite sample
+is rejected instead of corrupting a single-format WAV.
 
 The optional `decode --fast` QMF shortcut changes the output. Use the default path when full processing fidelity is required.
 

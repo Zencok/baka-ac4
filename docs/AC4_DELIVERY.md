@@ -42,8 +42,8 @@ not a runtime dependency or distributable library.
 - Validate full-song outputs, finite samples, seek/reset history, corrupted inputs
   and dynamic layout changes. Preserve ordinary stereo and broadcast regressions.
 - Complete ACPL/other multichannel gaps where actual streams expose them.
-- Preserve speaker metadata in multichannel WAV output and reject format changes
-  that cannot be represented by a single WAV header.
+- Multichannel WAV metadata and format-change rejection implemented; retain
+  zero masks for unanchored core signals.
 - Verify mobile cost where available; label host/theoretical evidence accurately.
 
 ## Specification
@@ -76,3 +76,18 @@ output options. Before the fix, replay failed a fresh-decoder comparison at the
 first frame. Regression coverage compares all six frames for stereo simple,
 stereo A-SPX and 5.1 A-SPX fixtures, with QMF bypass enabled and disabled.
 This establishes deterministic history isolation, not a seek latency guarantee.
+
+## WAV output
+
+Multichannel export uses WAVE_FORMAT_EXTENSIBLE with the original mask and
+PCM/float subtype. Core signals with no speaker assignment retain a zero mask.
+The writer rejects changing formats, inconsistent plane lengths, non-finite
+samples, empty output and size/rate overflows before writing invalid samples.
+Ordinary mono/stereo speaker output retains the previous 44-byte header.
+
+Before/after export comparisons retain byte-identical PCM on all three local
+regression streams. Stereo output files remain byte-identical. The 5.1 float
+WAV hash changed only with the new header: `e7dfdb1699975db6fffc8904e8fb0a5f`
+→ `00977d662f40f6079a6fba2882ba45c3`. The regression baseline is updated after
+verifying its previous hash against the control executable. External inspection
+recognizes the new 5.1 file as float PCM with the `5.1(side)` layout.

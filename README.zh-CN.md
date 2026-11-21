@@ -88,7 +88,12 @@ pub fn decode_packets(packets: &[Vec<u8>]) -> Result<()> {
 | A-JOC 核心下混信号 | 显式启用 `set_ajoc_core_signals(true)` 或 CLI `--core-signals`，已测试 448/1500 kbit/s 样本 |
 | 对象重建 / A-JOC 对象渲染 | 尚不支持，核心信号不能当作已渲染的扬声器输出 |
 
-尚未验证所有 AC-4 profile 和声道布局。CLI 使用基础 WAV 文件头；需要保留扬声器位置信息的应用应使用核心 API 提供的声道掩码。
+尚未验证所有 AC-4 profile 和声道布局。CLI 使用 WAVE_FORMAT_EXTENSIBLE 保留多声道掩码；未锚定的核心信号保持零掩码，不会据此猜测扬声器布局。
+
+A-JOC 核心信号通过 `AudioKind::AjocCoreSignals` 标识。`channel_mask == 0`
+表示未锚定的对象下混信号，不能仅按通道数量标为 7.1 或 7.1.4。默认解码器
+继续拒绝尚不能渲染的对象编码音频。实施与验证进度见
+[AC-4 交付记录](docs/AC4_DELIVERY.md)。
 
 ## 播放器集成
 
@@ -116,8 +121,3 @@ cargo clippy --release --all-targets --locked -- -D warnings
 ## 许可
 
 [GPL-3.0-or-later](LICENSE)。第三方来源与署名保留在 [NOTICE](NOTICE) 中。
-
-A-JOC 核心信号通过 `AudioKind::AjocCoreSignals` 标识。`channel_mask == 0`
-表示未锚定的对象下混信号，不能仅按通道数量标为 7.1 或 7.1.4。默认解码器
-继续拒绝尚不能渲染的对象编码音频。实施与验证进度见
-[AC-4 交付记录](docs/AC4_DELIVERY.md)。

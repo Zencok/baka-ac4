@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Preserve multichannel speaker masks and PCM/float subtypes in extensible WAV;
+  reject format changes, non-finite samples, empty output and RIFF overflow.
+
 - Reset all per-stream DSP/TOC histories on `flush()` and core-mode changes;
   replay after reset matches a fresh decoder bit for bit.
 

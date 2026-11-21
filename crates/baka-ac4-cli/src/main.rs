@@ -310,7 +310,7 @@ fn decode(path: &str, out_path: &str, fast: bool, f32out: bool, core: bool) -> E
                         peak = peak.max(v.abs());
                     }
                 }
-                if let Err(e) = wav.write_frame_planar(&pcm, info.sample_rate) {
+                if let Err(e) = wav.write_frame_planar(&pcm, info.sample_rate, info.channel_mask) {
                     eprintln!("error: wav write failed: {e}");
                     return ExitCode::FAILURE;
                 }

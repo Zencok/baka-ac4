@@ -88,7 +88,7 @@ Packets may include the `0xAC40` / `0xAC41` sync header. The decoder returns `Ok
 | A-JOC core downmix signals | Explicit `set_ajoc_core_signals(true)` / CLI `--core-signals`; tested 448/1500 kbit/s streams |
 | Object reconstruction / A-JOC object rendering | Not supported; raw core signals are not rendered speaker feeds |
 
-Not every AC-4 profile or channel layout has been validated. The CLI writes basic WAV headers; applications that need speaker-position metadata should use the core's channel mask.
+Not every AC-4 profile or channel layout has been validated. The CLI preserves multichannel speaker masks in WAVE_FORMAT_EXTENSIBLE output. Unanchored core signals retain a zero mask.
 
 The optional A-JOC core-signal mode exposes downmix essence for analysis and
 custom renderers. `AudioKind::AjocCoreSignals` with `channel_mask == 0` identifies
