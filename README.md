@@ -2,71 +2,62 @@
 
 # baka-ac4
 
-**AC-4 audio decoding in pure Rust.**
+**AC-4 audio decoding and A-JOC speaker rendering in pure Rust.**
 
 [![Rust](https://img.shields.io/badge/Rust-2024-DEA584?logo=rust&logoColor=white)](Cargo.toml)
 [![License](https://img.shields.io/badge/License-GPL--3.0--or--later-blue)](LICENSE)
 
 **English** · [简体中文](README.zh-CN.md)
 
-[Quick start](#quick-start) · [Rust API](#rust-api) · [Support](#support) · [Integration](#integration) · [Development](#development)
+[Quick start](#quick-start) · [Rust API](#rust-api) · [Output modes](#output-modes) · [Integration](#integration)
 
 </div>
 
-`baka-ac4` provides a standalone AC-4 decoder and command-line tools for MP4, M4A and raw AC-4 streams. The codec runs entirely in Rust, without a C decoder dependency.
+`baka-ac4` provides a reusable decoder library and a CLI for converting MP4, M4A and raw AC-4 files to WAV. The decoder runs entirely in Rust, without a C decoder dependency.
 
-- **Reusable decoder** — compressed packets in, planar `f32` PCM out.
-- **Playback integration** — embed the core in your existing audio pipeline.
-- **Practical CLI** — decode to WAV, inspect stream metadata and benchmark decoding.
-
-Requires Rust **1.100.0**, pinned by `rust-toolchain.toml`.
+Requires Rust **1.100.0**, pinned in `rust-toolchain.toml`.
 
 ## Quick start
 
-Install the CLI with Rust and Cargo:
-
 ```sh
 cargo install baka-ac4-cli --version 0.2.0 --locked
-```
 
-```sh
-# Decode to 16-bit PCM WAV
+# Convert channel-coded AC-4 to WAV
 baka-ac4 decode input.mp4 output.wav
 
-# Preserve float32 PCM output
-baka-ac4 decode --f32 input.ac4 output.wav
+# Render A-JOC audio to stereo float PCM
+baka-ac4 decode --render=stereo --f32 input.mp4 stereo.wav
 
-# Inspect frame metadata and coding tools as JSON
-baka-ac4 toc input.m4a
+# Render A-JOC audio to 7.1.4 speaker feeds
+baka-ac4 decode --render=7.1.4 --f32 input.mp4 surround.wav
 
-# Benchmark decoding over 10 rounds
-baka-ac4 bench input.mp4 10
+# Inspect frame metadata or benchmark decoding
+baka-ac4 toc --render=stereo input.mp4
+baka-ac4 bench --render=stereo input.mp4 10
 ```
 
-MP4/M4A files must contain an AC-4 track. The CLI also accepts raw `.ac4` streams. Full QMF processing is enabled by default; the optional `decode --fast` shortcut changes the output and is not the fidelity-preserving path.
+MP4/M4A input must contain an AC-4 track. Choose an explicit output mode for A-JOC audio; use `--render=stereo` for two-channel listening output. Output is 16-bit PCM by default. Use `--f32` to preserve floating-point samples, including peaks above unity.
 
 ## Rust API
-
-Add the decoder library to your project:
 
 ```toml
 [dependencies]
 baka-ac4-core = "0.2"
 ```
 
-Reuse channel buffers across packets:
-
 ```rust
 use baka_ac4_core::{Ac4Decoder, Result};
+use baka_ac4_core::ajoc::render::{RenderOptions, SpeakerLayout};
 
 pub fn decode_packets(packets: &[Vec<u8>]) -> Result<()> {
     let mut decoder = Ac4Decoder::new()?;
+    // Enable A-JOC stereo rendering. Channel-coded streams keep their layout.
+    decoder.set_ajoc_render(Some(RenderOptions::new(SpeakerLayout::Stereo)))?;
     let mut pcm = Vec::new();
 
     for packet in packets {
         if let Some(frame) = decoder.decode_frame_into(packet, &mut pcm)? {
-            // pcm[channel][sample]: planar f32 samples.
-            // Consume PCM here before decoding the next packet.
+            // pcm[channel][sample]: consume samples before the next decode.
             println!("{} Hz, {} channels", frame.sample_rate, pcm.len());
         }
     }
@@ -74,63 +65,43 @@ pub fn decode_packets(packets: &[Vec<u8>]) -> Result<()> {
 }
 ```
 
-Packets may include the `0xAC40` / `0xAC41` sync header. The decoder returns `Ok(None)` while waiting for an iframe. Frame metadata includes the audio kind, sample rate, channel mask, sample count and key-frame flag. `decode_frame()` is also available when an owned `Frame` is more convenient.
+Packets may include an AC-4 sync header. `Ok(None)` means the decoder is waiting for an independently decodable frame. Frame metadata includes `audio_kind`, `sample_rate`, `channel_mask`, `nb_samples` and `key_frame`.
 
-## Support
+## Output modes
 
-| Area | Status |
-| :--- | :--- |
-| AC-4 TOC v1/v2 and channel-coded audio | Supported, including tested stereo and 5.1 streams |
-| ASF, IMDCT, QMF, SAP and companding | Implemented |
-| A-SPX, including balance mode | Supported on tested broadcast streams |
-| SSF | Implemented; tested with controlled stream mutations |
-| ACPL | Implemented paths; successful decoding still needs real-stream validation |
-| A-JOC core downmix signals | Explicit `set_ajoc_core_signals(true)` / CLI `--core-signals`; tested 448/1500 kbit/s streams |
-| A-JOC reconstruction matrices | Opt-in `set_ajoc_metadata(true)`; bounded parsing and differential/dequantized gains; core PCM output |
-| A-JOC object signal reconstruction | Opt-in `set_ajoc_object_signals(true)` / CLI `--object-signals`; QMF matrices, decorrelation/ducking and object PCM |
-| A-JOC object properties | Resolved gain, absolute/differential/extended position and sample timing via `ajoc_metadata()` |
-| A-JOC stereo preview | Explicit `set_ajoc_stereo_preview(true)` / CLI `--stereo-preview`; gain and X-position projection |
-| A-JOC speaker rendering | `set_ajoc_render(...)` / CLI `--render=...`; stereo, 5.1, 7.1, 5.1.4 and 7.1.4 dynamic-object outputs |
-| A-JOC binaural rendering / reference parity | Not established; speaker feeds are not HRTF headphone output |
+| Output | Rust configuration | CLI option |
+| --- | --- | --- |
+| Channel-coded PCM | Default | No additional option |
+| A-JOC speaker feeds | `set_ajoc_render(Some(options))` | `--render=stereo`, `--render=5.1`, `--render=7.1`, `--render=5.1.4` or `--render=7.1.4` |
+| Reconstructed object signals | `set_ajoc_object_signals(true)` | `--object-signals` |
+| Core downmix signals | `set_ajoc_core_signals(true)` | `--core-signals` |
+| Basic gain/left-right projection | `set_ajoc_stereo_preview(true)` | `--stereo-preview` |
 
-Not every AC-4 profile or channel layout has been validated. The CLI preserves multichannel speaker masks in WAVE_FORMAT_EXTENSIBLE output. Unanchored core signals retain a zero mask.
+For A-JOC playback, prefer speaker rendering. It applies three-dimensional panning, object size and divergence, screen mapping, zone/elevation restrictions, snap, trim and timed gain updates. Stereo mixes LFE equally at 0.5 per side; surround layouts retain a discrete LFE channel.
 
-The optional A-JOC core-signal mode exposes downmix essence for analysis and
-custom renderers. `AudioKind::AjocCoreSignals` with `channel_mask == 0` identifies
-unanchored signals. Do not infer speaker positions from their count or route
-those planes directly as 7.1/7.1.4. The default decoder continues to reject
-object-coded streams that it cannot render. See [delivery status](docs/AC4_DELIVERY.md).
+Object and core outputs are intended for custom audio processing. A zero speaker mask means the planes have no assigned speaker layout. Core output retains a speaker assignment when one is present. Object output has a zero mask, places LFE first when present and does not apply object gain or spatial rendering. The basic stereo preview applies gain and left/right position only.
 
-For reconstructed object signals, use `baka-ac4 decode --object-signals --f32
-input.mp4 objects.wav`. The output kind is `AjocObjectSignals`, with a zero
-speaker mask and LFE first when present. The tested streams produce 21 planes.
-These planes precede OAMD object gain/position rendering and can exceed unity;
-float32 export preserves their range. This option cannot be combined with
-`--core-signals` or `--fast`.
+Select one A-JOC mode at a time. Rendering, object reconstruction and preview require full QMF processing and cannot be combined with `--fast`. The `--fast` option is a channel-decoding shortcut that changes the output.
 
-`baka-ac4 decode --stereo-preview --f32 input.mp4 preview.wav` produces a basic
-two-channel projection using object gain and left/right position with timed
-smoothing. Output kind is `AjocStereoPreview`, mask `0x3`. This preview omits
-Y/Z, zones/extents, trims, distance, divergence and binaural cues. It does not
-claim reference-equivalent immersive rendering. No limiter or normalization is
-applied. Select only one A-JOC output mode; preview also requires full QMF.
+Speaker feeds use ascending WAVE speaker-mask order. Multichannel WAV uses WAVE_FORMAT_EXTENSIBLE. No output limiter or loudness normalization is applied.
+
+### Supported scope
+
+- Channel-coded AC-4 with TOC v1/v2, ASF/SSF and A-SPX processing.
+- A-JOC 448/1500 kbit/s with dynamic-only object assignments and a non-alternative presentation.
+- Speaker output to stereo, 5.1, 7.1, 5.1.4 and 7.1.4.
+
+Object reconstruction/rendering does not support bed/mixed A-JOC assignments, zone codes 6/7 or reserved rendering codes. ACPL support is limited. The library does not provide HRTF headphone rendering, bass management, dialogue enhancement or presentation loudness processing. Distance, Y-warp and balance extensions are available as metadata but do not affect rendering.
 
 ## Integration
 
-`baka-ac4 decode --render=7.1.4 --f32 input.mp4 speakers.wav` renders dynamic
-objects using three-axis panning, size/divergence, screen mapping, zones, snap,
-trim and sample-timed ramps. Other choices are `stereo`, `5.1`, `7.1`, `5.1.4`.
-Output kind is `AjocSpeakerFeeds`, in ascending WAVE speaker-mask order. There
-is no limiter or presentation loudness processing; float PCM may exceed unity.
-Stereo folds LFE at 0.5 per side; surround retains a discrete LFE channel.
-This mode requires full QMF and cannot be combined with other A-JOC modes.
-See [delivery status](docs/AC4_DELIVERY.md) for supported metadata and validation limits.
+The host application owns demuxing, timestamps, playback devices and source access. The core accepts compressed packets and returns planar `f32` PCM; it does not provide networking or DRM decryption. The CLI loads the input file into memory and is intended for conversion and inspection.
 
-Use `baka-ac4-core` as the codec layer and keep source access, demuxing, timestamps and audio output in your player. Prefer the system decoder when it supports the stream; use Rust decoding when it does not.
+Decoding is stateful. To seek, start at a suitable independently decodable frame and discard pre-roll before the target. `flush()` clears stream history while preserving transform plans and output options. Call it on the playback control path because it allocates fresh history.
 
-AC-4 decoding is stateful. Seek from a suitable iframe and discard pre-roll before the target. `flush()` now clears all stream histories and waits for a fresh iframe, preserving transform plans and output options. It allocates fresh channel state and belongs on the playback control path.
+Changing A-JOC rendering options resets decoding history. Reapplying identical options preserves it. Configure the output before feeding packets, and reuse the PCM buffers between calls.
 
-The core does not provide networking, DRM decryption or a playback device. The CLI reads the input file into memory and is intended for file conversion and inspection, not as a streaming playback layer.
+See the [core API guide](crates/baka-ac4-core/README.md) and [CLI guide](crates/baka-ac4-cli/README.md).
 
 ## Development
 
@@ -140,13 +111,8 @@ cargo test --release --locked
 cargo clippy --release --all-targets --locked -- -D warnings
 ```
 
-Use release builds for decoding performance and mobile integration. Robustness tests include embedded fixtures; additional reference and stream-inspection tools are in [`tools/`](tools).
-
-| Package | Purpose |
-| :--- | :--- |
-| [`baka-ac4-core`](crates/baka-ac4-core) | Decoder library, tests and examples |
-| [`baka-ac4-cli`](crates/baka-ac4-cli) | File input, WAV output, inspection and benchmarks |
+Use release builds for playback and performance measurements.
 
 ## License
 
-[GPL-3.0-or-later](LICENSE). Third-party attribution is retained in [NOTICE](NOTICE).
+[GPL-3.0-or-later](LICENSE). Third-party notices are included in [NOTICE](NOTICE).

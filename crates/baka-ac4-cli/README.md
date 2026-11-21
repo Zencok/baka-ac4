@@ -1,48 +1,64 @@
 # baka-ac4-cli
 
-Command-line AC-4 decoding, inspection and benchmarks, powered by `baka-ac4-core`.
+Convert AC-4 files to WAV, inspect frame metadata and measure decoding performance. The executable is named **`baka-ac4`**.
 
-The executable is named **`baka-ac4`**.
+## Install
 
 ```sh
-baka-ac4 decode input.mp4 output.wav
-baka-ac4 decode --f32 input.ac4 output.wav
-baka-ac4 toc input.m4a
-baka-ac4 bench input.mp4 10
-baka-ac4 decode --object-signals --f32 input.mp4 objects.wav
-baka-ac4 decode --stereo-preview --f32 input.mp4 preview.wav
-baka-ac4 decode --render=7.1.4 --f32 input.mp4 speakers.wav
+cargo install baka-ac4-cli --version 0.2.0 --locked
 ```
 
-- Input: MP4/M4A containing an AC-4 track, or a raw `.ac4` stream.
-  Truncated sample payloads and inconsistent tables are rejected before decoding.
-- Output: 16-bit PCM WAV by default; `--f32` selects float32 WAV.
-- `toc` emits frame metadata, output kind, speaker mask and coding-tool statistics as JSON.
-- `--core-signals` explicitly enables A-JOC downmix essence for inspection or export.
-  Unanchored planes have a zero speaker mask; they are not rendered surround feeds.
-- `--object-signals` reconstructs object signals, with LFE first when present,
-  and labels `toc` output `ajoc-object-signals`. It retains a zero speaker mask.
-  Object gains/positions are not rendered. Use `--f32` to retain peaks above unity.
-  This option conflicts with `--core-signals` and `--fast`.
-- `--stereo-preview` applies object gain and equal-power left/right panning with
-  sample-timed smoothing. TOC labels it `ajoc-stereo-preview`, with mask `0x3`.
-  This is a basic stereo projection; Y/Z, zone/extent, trims, distance/divergence
-  and binaural cues are not applied. No normalization or limiting is applied;
-  use `--f32` to preserve peaks. It conflicts with other signal modes and `--fast`.
-- `bench` reports minimum and median decoding time. The optional round count defaults to 10 and accepts `1..=10000`.
-- `--render=stereo|5.1|7.1|5.1.4|7.1.4` renders dynamic objects to speaker
-  feeds using three-axis panning, size/divergence, zones/snap, screen mapping,
-  trim and timed gain ramps. TOC labels the output `ajoc-speaker-feeds` and
-  provides the actual WAVE speaker mask. Stereo folds LFE equally at 0.5;
-  other layouts retain discrete LFE. No limiting or presentation loudness is
-  applied. It conflicts with other A-JOC modes and `--fast`.
+Requires Rust 1.100.0.
 
-The CLI reads the input file into memory. It does not provide streaming playback or DRM decryption. Default decoding rejects object-coded audio; choose an explicit A-JOC mode, including `--render` for speaker feeds. Binaural headphone rendering is not provided. Additional codec limitations are listed in the project documentation. Multichannel WAV output preserves the speaker mask using WAVE_FORMAT_EXTENSIBLE;
-unanchored core signals retain a zero mask. A format change or non-finite sample
-is rejected instead of corrupting a single-format WAV.
+## Convert audio
 
-The optional `decode --fast` QMF shortcut changes the output. Use the default path when full processing fidelity is required.
+```sh
+# Channel-coded AC-4
+baka-ac4 decode input.mp4 output.wav
+
+# A-JOC to stereo
+baka-ac4 decode --render=stereo --f32 input.mp4 stereo.wav
+
+# A-JOC to surround speaker feeds
+baka-ac4 decode --render=7.1.4 --f32 input.mp4 surround.wav
+```
+
+Input may be MP4/M4A containing an AC-4 track, or a raw `.ac4` stream. Output is 16-bit PCM WAV by default; `--f32` selects float32 WAV and preserves peaks above unity. Multichannel output includes the WAVE speaker mask.
+
+A-JOC audio requires an explicit output mode:
+
+| Option | Output |
+| --- | --- |
+| `--render=stereo` | Two-channel speaker rendering |
+| `--render=5.1`, `--render=7.1` | Surround speaker rendering |
+| `--render=5.1.4`, `--render=7.1.4` | Surround rendering with height channels |
+| `--object-signals` | Object PCM without object gain/spatial rendering; LFE first when present |
+| `--core-signals` | Core downmix signals |
+| `--stereo-preview` | Basic gain and left-right projection |
+
+Use `--render` for playback output. Core and object modes are intended for custom processing. Object output has a zero speaker mask; core output retains an explicit speaker assignment when present. A zero mask means no assigned layout. The preview applies gain and left/right position only. Choose one A-JOC mode at a time.
+
+Speaker rendering applies three-dimensional panning, size/divergence, zones, snap, screen mapping, trim and timed gain updates. Stereo folds LFE equally at 0.5 per side; surround retains discrete LFE. Output has no limiter or loudness normalization.
+
+The `decode --fast` option skips part of the QMF processing and changes the output. It cannot be combined with rendering, object reconstruction or preview.
+
+## Inspect and benchmark
+
+```sh
+baka-ac4 toc --render=stereo input.mp4
+baka-ac4 bench --render=stereo input.mp4 10
+```
+
+`toc` writes JSON containing per-frame output kind, speaker mask and coding-tool information. Use the same output mode as your decode command.
+
+`bench` reports minimum and median decode time. The round count defaults to 10 and accepts `1..=10000`.
+
+## Supported scope
+
+A-JOC support covers 448/1500 kbit/s, dynamic-only object assignments and a non-alternative presentation. Bed/mixed assignments and unsupported rendering codes return errors. ACPL support is limited. HRTF headphone rendering, bass management, dialogue enhancement and presentation loudness processing are not provided.
+
+The CLI loads the input into memory. It provides file conversion rather than streaming playback, and does not decrypt DRM. A change in output format requires a separate WAV file.
 
 [Project and Rust API](https://github.com/Zencok/baka-ac4) · [简体中文](https://github.com/Zencok/baka-ac4/blob/main/README.zh-CN.md)
 
-GPL-3.0-or-later. See the included `LICENSE` and `NOTICE` files.
+GPL-3.0-or-later. See `LICENSE` and `NOTICE`.
