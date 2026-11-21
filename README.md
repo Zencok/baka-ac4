@@ -26,7 +26,7 @@ Requires Rust **1.100.0**, pinned by `rust-toolchain.toml`.
 Install the CLI with Rust and Cargo:
 
 ```sh
-cargo install baka-ac4-cli --version 0.1.0 --locked
+cargo install baka-ac4-cli --version 0.2.0 --locked
 ```
 
 ```sh
@@ -51,7 +51,7 @@ Add the decoder library to your project:
 
 ```toml
 [dependencies]
-baka-ac4-core = "0.1"
+baka-ac4-core = "0.2"
 ```
 
 Reuse channel buffers across packets:

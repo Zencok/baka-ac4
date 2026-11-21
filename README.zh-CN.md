@@ -26,7 +26,7 @@
 安装 Rust 与 Cargo 后，从源码安装 CLI：
 
 ```sh
-cargo install baka-ac4-cli --version 0.1.0 --locked
+cargo install baka-ac4-cli --version 0.2.0 --locked
 ```
 
 ```sh
@@ -51,7 +51,7 @@ MP4/M4A 文件需要包含 AC-4 音轨；CLI 也接受原始 `.ac4` 码流。默
 
 ```toml
 [dependencies]
-baka-ac4-core = "0.1"
+baka-ac4-core = "0.2"
 ```
 
 在多个压缩帧之间复用声道缓冲区：

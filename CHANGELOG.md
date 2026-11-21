@@ -1,6 +1,18 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 - 2026-11-22
+
+- Add opt-in A-JOC object reconstruction for tested 448/1500 kbit/s streams:
+  dry/wet matrices, differential/dequantized parameters, decorrelation/ducking,
+  cross-frame ramps and independent object QMF synthesis.
+- Resolve OAMD object gain, position, timing and shared screen/trim controls.
+- Add an explicit basic stereo preview and spatial speaker rendering to stereo,
+  5.1, 7.1, 5.1.4 and 7.1.4 with size/divergence, zones, snap and trim.
+- Expose speaker rendering through `set_ajoc_render(...)` and CLI `--render=...`;
+  identify raw core signals, reconstructed objects, preview and speaker feeds
+  separately through `AudioKind` and speaker masks.
+- Validate 79 automated tests and both complete A-JOC tiers in all five speaker
+  layouts. Preserve ordinary decoding baselines and earlier object/preview PCM.
 
 - Remove redundant Cargo homepage metadata so strict regression checks stay
   warning-free on the pinned toolchain.
@@ -13,12 +25,15 @@
 
 - Add explicit A-JOC core-signal decoding for tested 448/1500 kbit/s streams,
   indexed audio substream selection, variable channel elements and bounded reads.
-- Report `AudioKind` and preserve zero speaker masks for unanchored signals;
-  full object reconstruction/rendering remains unsupported.
+- Report `AudioKind` and preserve zero speaker masks for unanchored signals.
 
 - Reject truncated MP4 sample payloads, incomplete sample mappings and oversized
   table counts before decoding; CLI commands report an error instead of panicking.
 - Handle extended-size MP4 boxes and correctly recover track timescale/duration.
+
+Binaural rendering, native-reference PCM parity and additional A-JOC assignments
+remain outside the validated profile. Default decoding still requires an explicit
+A-JOC output mode. See `docs/AC4_DELIVERY.md` for detailed support boundaries.
 
 ## 0.1.0
 
