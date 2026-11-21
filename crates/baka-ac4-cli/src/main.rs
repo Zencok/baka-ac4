@@ -11,6 +11,23 @@ use std::process::ExitCode;
 use baka_ac4_core::StreamFeatures;
 use std::collections::BTreeMap;
 
+#[derive(Clone, Copy)]
+enum SignalOutput {
+    Channels,
+    Core,
+    Objects,
+}
+
+impl SignalOutput {
+    fn configure(self, decoder: &mut baka_ac4_core::Ac4Decoder) {
+        match self {
+            Self::Channels => decoder.set_ajoc_core_signals(false),
+            Self::Core => decoder.set_ajoc_core_signals(true),
+            Self::Objects => decoder.set_ajoc_object_signals(true),
+        }
+    }
+}
+
 fn main() -> ExitCode {
     // Decoder history and DSP scratch can exceed Windows' default main stack,
     // especially in debug builds. Keep the command on an explicitly sized stack.
@@ -35,23 +52,46 @@ fn main() -> ExitCode {
 
 fn run() -> ExitCode {
     let core = std::env::args().any(|a| a == "--core-signals");
-    let args: Vec<String> = std::env::args().filter(|a| a != "--core-signals").collect();
+    let objects = std::env::args().any(|a| a == "--object-signals");
+    let args: Vec<String> = std::env::args()
+        .filter(|a| a != "--core-signals" && a != "--object-signals")
+        .collect();
+    if core && objects {
+        eprintln!("error: choose either --core-signals or --object-signals");
+        return ExitCode::FAILURE;
+    }
+    if objects && args.iter().any(|a| a == "--fast") {
+        eprintln!("error: --object-signals requires full QMF processing; remove --fast");
+        return ExitCode::FAILURE;
+    }
+    let signals = if objects {
+        SignalOutput::Objects
+    } else if core {
+        SignalOutput::Core
+    } else {
+        SignalOutput::Channels
+    };
+    if objects {
+        eprintln!(
+            "A-JOC object-signal output selected: LFE first when present; no speaker/headphone rendering or OAMD object gains."
+        );
+    }
     if core {
         eprintln!(
             "A-JOC core-signal output selected: unanchored signals are not rendered speaker feeds."
         );
     }
     match args.get(1).map(String::as_str) {
-        Some("toc") if args.len() == 3 => toc(&args[2], core),
+        Some("toc") if args.len() == 3 => toc(&args[2], signals),
         Some("bench") if (3..=4).contains(&args.len()) => {
-            bench(&args[2], args.get(3).map(String::as_str), core)
+            bench(&args[2], args.get(3).map(String::as_str), signals)
         }
         Some("decode") => {
             let rest: Vec<&String> = args[2..].iter().filter(|a| !a.starts_with('-')).collect();
             let fast = args.iter().any(|a| a == "--fast");
             let f32out = args.iter().any(|a| a == "--f32");
             if rest.len() == 2 {
-                decode(rest[0], rest[1], fast, f32out, core)
+                decode(rest[0], rest[1], fast, f32out, signals)
             } else {
                 usage()
             }
@@ -60,7 +100,7 @@ fn run() -> ExitCode {
     }
 }
 
-fn bench(path: &str, rounds: Option<&str>, core: bool) -> ExitCode {
+fn bench(path: &str, rounds: Option<&str>, signals: SignalOutput) -> ExitCode {
     let (data, track) = match load(path) {
         Ok(v) => v,
         Err(e) => {
@@ -90,7 +130,7 @@ fn bench(path: &str, rounds: Option<&str>, core: bool) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
-        dec.set_ajoc_core_signals(core);
+        signals.configure(&mut dec);
         pcm.clear();
         let t = std::time::Instant::now();
         let mut produced = 0;
@@ -134,6 +174,9 @@ fn bench(path: &str, rounds: Option<&str>, core: bool) -> ExitCode {
 
 fn usage() -> ExitCode {
     eprintln!("optional: --core-signals decodes A-JOC downmix essence without object rendering");
+    eprintln!(
+        "optional: --object-signals reconstructs A-JOC object signals without speaker/headphone rendering"
+    );
     eprintln!("usage: baka-ac4 toc <input.mp4 | input.ac4>");
     eprintln!("       baka-ac4 decode [--fast] [--f32] <input.mp4 | input.ac4> <output.wav>");
     eprintln!("       --fast skips the QMF round trip for simple streams (slightly");
@@ -151,7 +194,7 @@ fn load(path: &str) -> Result<(Vec<u8>, mp4::Track), String> {
     Ok((data, track))
 }
 
-fn toc(path: &str, core: bool) -> ExitCode {
+fn toc(path: &str, signals: SignalOutput) -> ExitCode {
     let (data, track) = match load(path) {
         Ok(v) => v,
         Err(e) => {
@@ -167,7 +210,7 @@ fn toc(path: &str, core: bool) -> ExitCode {
         }
     };
 
-    dec.set_ajoc_core_signals(core);
+    signals.configure(&mut dec);
     println!("{{");
     println!(
         "  \"codec\": \"{}\", \"channels\": {}, \"timescale\": {}, \"samples\": {},",
@@ -196,10 +239,10 @@ fn toc(path: &str, core: bool) -> ExitCode {
                     f.nb_samples,
                     feats.codec_mode,
                     f.channel_mask,
-                    if f.audio_kind == baka_ac4_core::AudioKind::AjocCoreSignals {
-                        "ajoc-core-signals"
-                    } else {
-                        "channels"
+                    match f.audio_kind {
+                        baka_ac4_core::AudioKind::AjocCoreSignals => "ajoc-core-signals",
+                        baka_ac4_core::AudioKind::AjocObjectSignals => "ajoc-object-signals",
+                        baka_ac4_core::AudioKind::Channels => "channels",
                     },
                     feats.spec_frontend_l,
                     feats.spec_frontend_r,
@@ -263,7 +306,7 @@ fn feature_key(f: &StreamFeatures) -> String {
     )
 }
 
-fn decode(path: &str, out_path: &str, fast: bool, f32out: bool, core: bool) -> ExitCode {
+fn decode(path: &str, out_path: &str, fast: bool, f32out: bool, signals: SignalOutput) -> ExitCode {
     let (data, track) = match load(path) {
         Ok(v) => v,
         Err(e) => {
@@ -279,7 +322,7 @@ fn decode(path: &str, out_path: &str, fast: bool, f32out: bool, core: bool) -> E
         }
     };
     dec.set_qmf_bypass(fast);
-    dec.set_ajoc_core_signals(core);
+    signals.configure(&mut dec);
     let out = match File::create(out_path) {
         Ok(f) => f,
         Err(e) => {

@@ -25,7 +25,8 @@ Frame metadata provides `audio_kind`, `sample_rate`, `channel_mask`, `nb_samples
 Channel-coded audio, ASF/SSF, QMF and A-SPX paths are implemented. A-JOC downmix essence is available through explicit `set_ajoc_core_signals(true)`.
 `AudioKind::AjocCoreSignals` identifies it; a zero `channel_mask` means the planes
 are unanchored signals and must not be assigned speaker positions by count.
-Object reconstruction/rendering is unsupported, and ACPL successful decoding still needs real-stream validation. Full QMF processing is enabled by default.
+Object signal reconstruction is opt-in; object gain/position rendering remains pending.
+ACPL successful decoding still needs real-stream validation. Full QMF processing is enabled by default.
 
 For A-JOC matrix inspection, call `set_ajoc_metadata(true)` before decoding and
 read `ajoc_metadata()` after a successful frame. This also enables core signal
@@ -37,6 +38,23 @@ and rendering properties are traversed for alignment, not exposed or rendered.
 Disabling inspection retains core output. Metadata is cleared on flush, a failed
 packet or a packet that produces no A-JOC frame. Inspection allocates parameter
 storage and is not the allocation-free playback path.
+
+`set_ajoc_object_signals(true)` additionally reconstructs object PCM using all
+eight parameter-band maps, cross-frame interpolation, the dry/wet pre-matrix,
+seven independent decorrelator/ducker instances and independent QMF synthesis
+histories. `AudioKind::AjocObjectSignals` has a zero speaker mask, with LFE first
+when present. This is not a rendered listening output: OAMD gain/position,
+speaker/headphone rendering and optional dialogue enhancement are not applied.
+Object mode always uses full QMF processing. Disabling it retains core/metadata
+mode; disabling core output or metadata inspection also disables object mode.
+
+The standalone `ajoc::reconstruction::Reconstructor` accepts an explicit
+decorrelation backend; `ajoc::decorrelation::AjocDecorrelation` implements the
+specified filter/ducker stages. It operates on complex QMF planes, without LFE.
+`copy_ajoc_core_qmf` exposes fullband planes from the last successfully inspected
+frame. Validation errors occur before backend/history mutation; backend or
+arithmetic failures reset both reconstruction and backend histories.
+Reset both on seek. PCM object mode clears all these histories through `flush()`.
 
 The host owns source access, demuxing, timestamps, seek pre-roll and audio output. `flush()` clears all stream histories and waits for a fresh iframe. Transform plans
 and output options are preserved. Call it on the control path because it allocates

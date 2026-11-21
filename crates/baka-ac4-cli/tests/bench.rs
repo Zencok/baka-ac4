@@ -27,3 +27,20 @@ fn multiple_rounds_retain_peak() {
     );
     assert!(String::from_utf8_lossy(&output.stdout).contains("peak=0.2019"));
 }
+
+#[test]
+fn object_output_rejects_conflicting_modes_before_opening_input() {
+    for flags in [
+        ["--object-signals", "--core-signals"],
+        ["--object-signals", "--fast"],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_baka-ac4"))
+            .args(["decode", flags[0], flags[1], "missing.ac4", "unused.wav"])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let message = String::from_utf8_lossy(&output.stderr);
+        assert!(message.contains("error:"));
+        assert!(!message.contains("cannot read"));
+    }
+}

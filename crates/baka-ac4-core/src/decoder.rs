@@ -909,6 +909,7 @@ pub struct State {
     ssgroup: [SubstreamGroupInfo; 16],
     substream: Substream,
     ajoc_history: crate::ajoc::History,
+    ajoc_object_decoder: Option<Box<crate::ajoc::signals::ObjectDecoder>>,
 }
 
 impl Default for State {
@@ -948,6 +949,7 @@ impl Default for State {
             ssgroup: std::array::from_fn(|_| SubstreamGroupInfo::default()),
             substream: Substream::default(),
             ajoc_history: crate::ajoc::History::default(),
+            ajoc_object_decoder: None,
         }
     }
 }
@@ -959,6 +961,8 @@ pub enum AudioKind {
     Channels,
     /// A-JOC downmix essence; unanchored planes are not speaker feeds.
     AjocCoreSignals,
+    /// Reconstructed object signals, LFE first when present; not speaker feeds.
+    AjocObjectSignals,
 }
 
 /// Layout information returned by [`Ac4Decoder::decode_frame_into`] when a
@@ -966,7 +970,7 @@ pub enum AudioKind {
 pub struct FrameInfo {
     pub audio_kind: AudioKind,
     pub sample_rate: u32,
-    /// WAVE speaker mask, or zero for unanchored A-JOC core signals.
+    /// WAVE speaker mask, or zero for unanchored A-JOC signal planes.
     pub channel_mask: u64,
     pub nb_samples: usize,
     pub key_frame: bool,
@@ -989,7 +993,7 @@ pub struct StreamFeatures {
 pub struct Frame {
     pub audio_kind: AudioKind,
     pub sample_rate: u32,
-    /// WAVE speaker mask. Zero denotes unanchored A-JOC core signals.
+    /// WAVE speaker mask. Zero denotes unanchored A-JOC signal planes.
     pub channel_mask: u64,
     pub nb_samples: usize,
     /// True when this frame is a sync/iframe (all information self-contained).
@@ -1010,7 +1014,9 @@ pub struct Ac4Decoder {
     qmf_bypass: bool,
     ajoc_core: bool,
     ajoc_metadata_enabled: bool,
+    ajoc_objects: bool,
     ajoc_metadata: Option<crate::ajoc::AjocMetadata>,
+    ajoc_qmf_available: bool,
     variable_pairs: Vec<(usize, usize)>,
 }
 
@@ -1030,7 +1036,9 @@ impl Ac4Decoder {
             qmf_bypass: false,
             ajoc_core: false,
             ajoc_metadata_enabled: false,
+            ajoc_objects: false,
             ajoc_metadata: None,
+            ajoc_qmf_available: false,
             variable_pairs: Vec::with_capacity(6),
             tables: Tables {
                 qmf_ana: QmfAnalysis::new(),
@@ -5144,34 +5152,16 @@ impl Ac4Decoder {
 
     fn qmf_synthesis(&mut self, ch: usize, pcm_out: &mut [f32]) {
         let nts = self.st.num_qmf_timeslots as usize;
-        let mut acc;
-
         for ts in 0..nts {
             let ssch = &mut self.st.substream.ssch[ch];
-            // shift samples by MAX_QMF_BANDS*2
-            let qf = &mut ssch.qsyn_filt;
-            qf.copy_within(0..MAX_QMF_BANDS * 20 - MAX_QMF_BANDS * 2, MAX_QMF_BANDS * 2);
-
-            // FFT-based filterbank (naive dot products covered by qmf.rs
-            // unit tests).
-            let (q0r, q1r) = (ssch.q[0][ts], ssch.q[1][ts]);
-            self.tables
-                .qmf_syn
-                .filterbank(&q0r, &q1r, &mut qf[..MAX_QMF_BANDS * 2]);
-
-            // window-multiply and fold the ten 64-sample segments in one
-            // pass (segment 2m comes from qf[256m..], segment 2m+1 from
-            // qf[256m+192..]); no intermediate scatter buffer.
-            acc = [0.0f32; MAX_QMF_BANDS];
-            for n in 0..10 {
-                let src = 128 * n + 64 * (n & 1);
-                let qs = &qf[src..src + MAX_QMF_BANDS];
-                let ws = &QWIN[n * MAX_QMF_BANDS..n * MAX_QMF_BANDS + MAX_QMF_BANDS];
-                for j in 0..MAX_QMF_BANDS {
-                    acc[j] += qs[j] * ws[j];
-                }
-            }
-            pcm_out[ts * MAX_QMF_BANDS..ts * MAX_QMF_BANDS + MAX_QMF_BANDS].copy_from_slice(&acc);
+            let mut slot = [0.0; MAX_QMF_BANDS];
+            self.tables.qmf_syn.synthesize_slot(
+                &mut ssch.qsyn_filt,
+                &ssch.q[0][ts],
+                &ssch.q[1][ts],
+                &mut slot,
+            );
+            pcm_out[ts * MAX_QMF_BANDS..(ts + 1) * MAX_QMF_BANDS].copy_from_slice(&slot);
         }
     }
 
@@ -6497,7 +6487,12 @@ impl Ac4Decoder {
         buf: &mut Vec<Vec<f32>>,
     ) -> Result<Option<FrameInfo>> {
         self.ajoc_metadata = None;
+        self.ajoc_qmf_available = false;
         if packet.len() < 8 {
+            self.st.ajoc_object_decoder = None;
+            if self.ajoc_objects {
+                buf.clear();
+            }
             return Err(invalid("invalid packet size"));
         }
 
@@ -6520,6 +6515,11 @@ impl Ac4Decoder {
         let res = self.decode_frame_inner(&mut gb, buf);
         if res.is_err() {
             self.ajoc_metadata = None;
+            self.ajoc_qmf_available = false;
+            self.st.ajoc_object_decoder = None;
+            if self.ajoc_objects {
+                buf.clear();
+            }
             if crate::bitreader::trace_enabled() {
                 crate::bitreader::trace_dump();
             }
@@ -6687,7 +6687,8 @@ impl Ac4Decoder {
             }
         }
 
-        let qmf_bypass = self.qmf_bypass && self.st.substream.codec_mode < enums::CM_ASPX;
+        let qmf_bypass =
+            self.qmf_bypass && !self.ajoc_objects && self.st.substream.codec_mode < enums::CM_ASPX;
         for ch in 0..nb_channels {
             self.prepare_channel(ch, !qmf_bypass);
         }
@@ -6695,6 +6696,38 @@ impl Ac4Decoder {
         self.channels_companding(nb_channels);
 
         self.channels_aspx_processing(nb_channels)?;
+        self.ajoc_qmf_available = ajoc_core && self.ajoc_metadata.is_some() && !qmf_bypass;
+
+        if ajoc_core && self.ajoc_objects {
+            let mut core = Vec::new();
+            self.copy_ajoc_core_qmf(&mut core)?;
+            let has_lfe = self.st.ssgroup[0].ssinfo.lfe != 0;
+            let mut lfe = [0.0; 2048];
+            if has_lfe {
+                self.decode_channel(0, &mut lfe[..nb_samples], false);
+            }
+            let decoder = self
+                .st
+                .ajoc_object_decoder
+                .get_or_insert_with(Default::default);
+            decoder.process(
+                &self.tables.qmf_syn,
+                self.ajoc_metadata
+                    .as_ref()
+                    .ok_or_else(|| invalid("missing A-JOC matrices"))?,
+                &core,
+                has_lfe.then_some(&lfe[..nb_samples]),
+                data,
+            )?;
+            self.st.first_frame = 0;
+            return Ok(Some(FrameInfo {
+                audio_kind: AudioKind::AjocObjectSignals,
+                sample_rate: sample_rate as u32,
+                channel_mask: 0,
+                nb_samples,
+                key_frame: self.st.iframe_global != 0,
+            }));
+        }
 
         // Reuse the caller's channel buffers across frames (Vec::clear on a
         // Vec<Vec<f32>> would drop them).
@@ -6746,6 +6779,10 @@ impl Ac4Decoder {
     pub fn set_ajoc_core_signals(&mut self, enable: bool) {
         if self.ajoc_core != enable {
             self.ajoc_core = enable;
+            if !enable {
+                self.ajoc_objects = false;
+                self.ajoc_metadata_enabled = false;
+            }
             self.flush();
         }
     }
@@ -6759,6 +6796,9 @@ impl Ac4Decoder {
         }
         if self.ajoc_metadata_enabled != enable {
             self.ajoc_metadata_enabled = enable;
+            if !enable {
+                self.ajoc_objects = false;
+            }
             self.flush();
         }
     }
@@ -6766,6 +6806,53 @@ impl Ac4Decoder {
     /// Reconstruction parameters from the last successful frame, if requested.
     pub fn ajoc_metadata(&self) -> Option<&crate::ajoc::AjocMetadata> {
         self.ajoc_metadata.as_ref()
+    }
+
+    /// Reconstruct fullband A-JOC objects with matrix interpolation,
+    /// decorrelation/ducking and QMF synthesis. The LFE plane, when present,
+    /// precedes the fullband objects. Output has a zero speaker mask and kind
+    /// AjocObjectSignals. OAMD gain/position rendering and dialogue enhancement
+    /// are not applied. Not a headphone/speaker playback mode.
+    pub fn set_ajoc_object_signals(&mut self, enable: bool) {
+        if enable {
+            self.set_ajoc_metadata(true);
+        }
+        if self.ajoc_objects != enable {
+            self.ajoc_objects = enable;
+            self.flush();
+        }
+    }
+
+    /// Copy the last inspected A-JOC frame's fullband core QMF planes, in
+    /// bitstream signal order, excluding LFE. Requires a successful metadata
+    /// inspection frame and the full QMF path. This is a control/research API;
+    /// it does not change returned PCM or reconstruct/render the objects.
+    pub fn copy_ajoc_core_qmf(
+        &self,
+        output: &mut crate::ajoc::reconstruction::QmfPlanes,
+    ) -> Result<()> {
+        output.clear();
+        if self.ajoc_metadata.is_none() {
+            return Err(invalid("no inspected A-JOC frame"));
+        }
+        if !self.ajoc_qmf_available {
+            return Err(unsupported("A-JOC QMF inspection with bypass"));
+        }
+        let info = &self.st.ssgroup[0].ssinfo;
+        let first = usize::from(info.lfe != 0);
+        let count = info.n_fullband_dmx_signals as usize;
+        let slots = self.st.num_qmf_timeslots as usize;
+        for ch in first..first + count {
+            let q = &self.st.substream.ssch[ch].q;
+            let mut plane = vec![[[0.0; 2]; 64]; slots];
+            for (ts, slot) in plane.iter_mut().enumerate() {
+                for (sb, sample) in slot.iter_mut().enumerate() {
+                    *sample = [q[0][ts][sb], q[1][ts][sb]];
+                }
+            }
+            output.push(plane);
+        }
+        Ok(())
     }
 
     /// Enables or disables the QMF round-trip shortcut for simple streams
@@ -6794,6 +6881,7 @@ impl Ac4Decoder {
         self.st = State::default();
         self.variable_pairs.clear();
         self.ajoc_metadata = None;
+        self.ajoc_qmf_available = false;
     }
 }
 

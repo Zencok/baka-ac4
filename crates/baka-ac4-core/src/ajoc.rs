@@ -7,6 +7,10 @@ use crate::error::{Result, invalid};
 use crate::vlc::Vlc;
 use std::sync::OnceLock;
 
+pub mod decorrelation;
+pub mod reconstruction;
+pub(crate) mod signals;
+
 /// One reconstruction parameter update, in QMF slots.
 #[derive(Clone, Debug)]
 pub struct DataPoint {

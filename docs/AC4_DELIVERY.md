@@ -42,14 +42,15 @@ not a runtime dependency or distributable library.
   exact plane-length assertions, and decoded all 5025 entries in host
   release runs (1.990 s / 3.443 s; peaks 0.3866 / 0.3319). Numerical parity with
   reference core PCM is not yet established.
-- Full reconstruction and metadata rendering remain in progress.
+- Raw object-signal reconstruction is implemented in the opt-in mode described
+  below; object gain/position rendering and reference parity remain in progress.
 - Reconstruction-matrix inspection now passes both complete recordings,
   including shared timing, cross-frame coefficient history and exact payload
   boundary assertions; see the reconstruction-parameters section below.
 
 ## Remaining acceptance
 
-- Reconstruct A-JOC objects and parse their dynamic object metadata; render to
+- Interpret A-JOC dynamic object gain/position metadata; render to
   defined speaker/headphone outputs and compare against the reference.
 - Validate full-song outputs, finite samples, seek/reset history, corrupted inputs
   and dynamic layout changes. Preserve ordinary stereo and broadcast regressions.
@@ -130,15 +131,57 @@ cannot commit partial dialogue/coefficient history. Authored tests cover exact
 bit truncations, mutations, sparse resets, incompatible time history, quantizer
 wrap and frequency-to-time transitions. All codebook symbols are round-tripped.
 
-Output remains `AjocCoreSignals`. QMF interpolation, decorrelation/transient
-ducking, object audio reconstruction, OAMD-driven rendering and comparison of
+Inspection-only output remains `AjocCoreSignals`. The separate object-signal
+mode below implements reconstruction. OAMD-driven rendering and comparison of
 rendered PCM against the working native reference remain pending. No player
-integration should advertise full A-JOC spatial playback from this milestone.
+integration should advertise full A-JOC spatial playback from these milestones.
+
+## A-JOC object-signal reconstruction
+
+`set_ajoc_object_signals(true)` / CLI `--object-signals` now performs all eight
+parameter-band mappings, cross-frame dry/wet coefficient ramps, the decorrelation
+input pre-matrix, seven independent IIR/ducker histories (D0,D2,D1 cyclic
+coefficients), complex QMF mixing and independent object QMF synthesis. LFE
+is passed through first when present. The shared synthesis-slot helper also
+serves ordinary channel decoding, retaining its accumulation order.
+
+The implementation uses ETSI TS 103 190-1 V1.3.1 clause 5.7.7.4 tables 197–200
+for the region-specific all-pass delays/coefficients and 15-band transient
+ducker, and Part 2 clauses 5.7.3.1/4/5/6 for the object reconstruction pipeline.
+Filter histories use f64; input/output QMF and PCM remain f32. Ramps retain
+the old value in their starting slot and reach their target over the following
+signalled number of slots, without overshoot; unfinished ramps cross frames.
+Exact ramp/filter numerical parity with the native reference remains unverified.
+
+Both complete local streams passed all 5025 object frames and produced 21 finite
+planes (LFE + 20 fullband objects), with nonzero activity in every plane. Peaks
+before OAMD gain/rendering were 2.2072082 and 1.6112839. One host release run took
+7.382 s / 10.476 s for approximately 214.4 s of audio after sharing the existing
+QMF transform plan. This is host evidence,
+not mobile timing. Flush/replay matched the first six frames sample for sample;
+the test also exercises object/core mode transitions and malformed-packet output
+invalidation. The two metadata/core acceptance runs remain passing.
+The LFE-first plane also matches core-mode LFE sample for sample after reset.
+
+Output is tagged `AjocObjectSignals`, with speaker mask zero. Object gain,
+position, zone/extent, trims, speaker/headphone rendering and optional dialogue
+enhancement are not applied. Float WAV export preserves object peaks above 1;
+integer export clips these peaks. `--object-signals` rejects `--fast` and
+`--core-signals`. The default API still rejects object-coded input.
+
+The standalone matrix engine validates bounded dimensions, timing, finite QMF
+input and matrix shapes before changing history or calling a backend. Backend
+errors/non-finite arithmetic clear the output and reset both matrix/backend
+histories. A stream dimension change requires reset. PCM object mode forces
+full QMF and resets matrix, all-pass, ducker and synthesis histories on flush.
+It allocates signal/parameter storage and does not claim an allocation-free
+real-time callback path. `copy_ajoc_core_qmf` is an inspection API for native DSP
+consumers, with last-frame availability tracked independently of option changes.
 
 ## Validation commands
 
 - `cargo test --release --locked`: unit, generated A-JOC, malformed input,
-  history reset and transform allocation checks (41 tests passed).
+  history reset and transform allocation checks (52 tests passed).
 - `cargo clippy --release --locked --all-targets -- -D warnings`.
 - `BAKA_AC4_IMMERSIVE_DIR=<local-directory> cargo test --release --locked
   -p baka-ac4-cli --test immersive -- --ignored --nocapture`: both real A-JOC
@@ -147,13 +190,24 @@ integration should advertise full A-JOC spatial playback from this milestone.
   mutation differential (114.86–118.66 dB on the tested mutations). Full fuzz
   was run separately through the Cargo test command.
 
-The five new authored matrix tests include all twelve Huffman codebooks, whose
+The authored matrix transport tests include all twelve Huffman codebooks, whose
 longest code is 29 bits. The optional full-song test additionally verifies the
 metadata path and its flush/error invalidation. Ordinary decoding baselines
 remain byte-identical. Supplementary change/quality checks were used; the
 available generic security scanner does not scan Rust, so its empty result is
 not security evidence. Reader bounds, bounded dimensions and transactional
 coefficient history were reviewed directly and exercised by the Rust tests.
+
+The ten new DSP tests cover every frequency-map row, complex dry/wet mixing,
+absolute-wet pre-matrices, 64-slot ramps across frames without new points,
+interrupted ramps, sparse zeros, disabled/independent decorrelators, malformed
+shapes, backend failures and non-finite output. All-pass impulse responses verify
+the specified delay/first tap and unit energy in all three frequency regions
+for D0/D1/D2. A CLI test rejects conflicting output modes before opening input.
+CLI checks on the first 48 packets of both tiers produced float extensible WAV
+with 21 signals, 48 kHz and a zero speaker mask; every TOC entry identified
+`ajoc-object-signals`. Ordinary stream hashes and SSF mutation SNR remain at
+their previous baselines.
 
 Removed redundant homepage metadata which produced manifest warnings and made
 the strict regression script reject an otherwise successful Clippy run.

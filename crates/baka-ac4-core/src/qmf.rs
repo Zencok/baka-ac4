@@ -91,6 +91,28 @@ impl Default for QmfSynthesis {
 }
 
 impl QmfSynthesis {
+    /// Synthesize one 64-sample PCM slot with caller-owned stream history.
+    /// The history is initialized to zero and kept independently per signal.
+    pub fn synthesize_slot(
+        &self,
+        history: &mut [f32; 1280],
+        real: &[f32; 64],
+        imaginary: &[f32; 64],
+        output: &mut [f32; 64],
+    ) {
+        history.copy_within(0..1152, 128);
+        self.filterbank(real, imaginary, &mut history[..128]);
+        output.fill(0.0);
+        for n in 0..10 {
+            let src = 128 * n + 64 * (n & 1);
+            let samples = &history[src..src + 64];
+            let window = &crate::tables::QWIN[n * 64..n * 64 + 64];
+            for j in 0..64 {
+                output[j] += samples[j] * window[j];
+            }
+        }
+    }
+
     pub fn new() -> Self {
         let mut planner = FftPlanner::<f32>::new();
         let fft = planner.plan_fft_inverse(FFT_LEN);

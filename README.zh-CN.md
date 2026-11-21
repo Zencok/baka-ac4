@@ -87,7 +87,8 @@ pub fn decode_packets(packets: &[Vec<u8>]) -> Result<()> {
 | ACPL | 已实现相关路径，成功解码仍需真实码流验证 |
 | A-JOC 核心下混信号 | 显式启用 `set_ajoc_core_signals(true)` 或 CLI `--core-signals`，已测试 448/1500 kbit/s 样本 |
 | A-JOC 重建矩阵 | 显式启用 `set_ajoc_metadata(true)`；有界解析、差分恢复与反量化，PCM 仍为核心信号 |
-| 对象重建 / A-JOC 对象渲染 | 尚不支持，核心信号不能当作已渲染的扬声器输出 |
+| A-JOC 对象信号重建 | 显式启用 `set_ajoc_object_signals(true)` 或 CLI `--object-signals`；已实现 QMF 矩阵、去相关、瞬态抑制和对象 PCM |
+| A-JOC 扬声器／耳机渲染 | 待完成；对象增益、位置渲染及参考 PCM 一致性尚未建立 |
 
 尚未验证所有 AC-4 profile 和声道布局。CLI 使用 WAVE_FORMAT_EXTENSIBLE 保留多声道掩码；未锚定的核心信号保持零掩码，不会据此猜测扬声器布局。
 
@@ -95,6 +96,11 @@ A-JOC 核心信号通过 `AudioKind::AjocCoreSignals` 标识。`channel_mask == 
 表示未锚定的对象下混信号，不能仅按通道数量标为 7.1 或 7.1.4。默认解码器
 继续拒绝尚不能渲染的对象编码音频。实施与验证进度见
 [AC-4 交付记录](docs/AC4_DELIVERY.md)。
+
+使用 `baka-ac4 decode --object-signals --f32 input.mp4 objects.wav` 可导出重建对象。
+输出标记为 `AjocObjectSignals`，通道掩码为零；存在 LFE 时放在第一路。
+已测样本输出 21 路，尚未应用 OAMD 对象增益和位置渲染，峰值可能超过 1，
+建议使用浮点导出保留幅度。该选项不能与 `--core-signals` 或 `--fast` 同用。
 
 ## 播放器集成
 

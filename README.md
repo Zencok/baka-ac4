@@ -87,7 +87,8 @@ Packets may include the `0xAC40` / `0xAC41` sync header. The decoder returns `Ok
 | ACPL | Implemented paths; successful decoding still needs real-stream validation |
 | A-JOC core downmix signals | Explicit `set_ajoc_core_signals(true)` / CLI `--core-signals`; tested 448/1500 kbit/s streams |
 | A-JOC reconstruction matrices | Opt-in `set_ajoc_metadata(true)`; bounded parsing and differential/dequantized gains; core PCM output |
-| Object reconstruction / A-JOC object rendering | Not supported; raw core signals are not rendered speaker feeds |
+| A-JOC object signal reconstruction | Opt-in `set_ajoc_object_signals(true)` / CLI `--object-signals`; QMF matrices, decorrelation/ducking and object PCM |
+| A-JOC speaker/headphone rendering | Pending; object gain/position rendering and reference PCM parity are not established |
 
 Not every AC-4 profile or channel layout has been validated. The CLI preserves multichannel speaker masks in WAVE_FORMAT_EXTENSIBLE output. Unanchored core signals retain a zero mask.
 
@@ -96,6 +97,13 @@ custom renderers. `AudioKind::AjocCoreSignals` with `channel_mask == 0` identifi
 unanchored signals. Do not infer speaker positions from their count or route
 those planes directly as 7.1/7.1.4. The default decoder continues to reject
 object-coded streams that it cannot render. See [delivery status](docs/AC4_DELIVERY.md).
+
+For reconstructed object signals, use `baka-ac4 decode --object-signals --f32
+input.mp4 objects.wav`. The output kind is `AjocObjectSignals`, with a zero
+speaker mask and LFE first when present. The tested streams produce 21 planes.
+These planes precede OAMD object gain/position rendering and can exceed unity;
+float32 export preserves their range. This option cannot be combined with
+`--core-signals` or `--fast`.
 
 ## Integration
 

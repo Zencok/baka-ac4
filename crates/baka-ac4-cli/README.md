@@ -9,6 +9,7 @@ baka-ac4 decode input.mp4 output.wav
 baka-ac4 decode --f32 input.ac4 output.wav
 baka-ac4 toc input.m4a
 baka-ac4 bench input.mp4 10
+baka-ac4 decode --object-signals --f32 input.mp4 objects.wav
 ```
 
 - Input: MP4/M4A containing an AC-4 track, or a raw `.ac4` stream.
@@ -17,9 +18,13 @@ baka-ac4 bench input.mp4 10
 - `toc` emits frame metadata, output kind, speaker mask and coding-tool statistics as JSON.
 - `--core-signals` explicitly enables A-JOC downmix essence for inspection or export.
   Unanchored planes have a zero speaker mask; they are not rendered surround feeds.
+- `--object-signals` reconstructs object signals, with LFE first when present,
+  and labels `toc` output `ajoc-object-signals`. It retains a zero speaker mask.
+  Object gains/positions are not rendered. Use `--f32` to retain peaks above unity.
+  This option conflicts with `--core-signals` and `--fast`.
 - `bench` reports minimum and median decoding time. The optional round count defaults to 10 and accepts `1..=10000`.
 
-The CLI reads the input file into memory. It does not provide streaming playback or DRM decryption. Object-coded audio is unsupported; additional codec limitations are listed in the project documentation. Multichannel WAV output preserves the speaker mask using WAVE_FORMAT_EXTENSIBLE;
+The CLI reads the input file into memory. It does not provide streaming playback or DRM decryption. Default decoding rejects object-coded audio; the explicit signal modes support tested A-JOC profiles, without speaker/headphone rendering. Additional codec limitations are listed in the project documentation. Multichannel WAV output preserves the speaker mask using WAVE_FORMAT_EXTENSIBLE;
 unanchored core signals retain a zero mask. A format change or non-finite sample
 is rejected instead of corrupting a single-format WAV.
 
