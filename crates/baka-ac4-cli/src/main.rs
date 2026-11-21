@@ -34,16 +34,24 @@ fn main() -> ExitCode {
 }
 
 fn run() -> ExitCode {
-    let args: Vec<String> = std::env::args().collect();
+    let core = std::env::args().any(|a| a == "--core-signals");
+    let args: Vec<String> = std::env::args().filter(|a| a != "--core-signals").collect();
+    if core {
+        eprintln!(
+            "A-JOC core-signal output selected: unanchored signals are not rendered speaker feeds."
+        );
+    }
     match args.get(1).map(String::as_str) {
-        Some("toc") if args.len() == 3 => toc(&args[2]),
-        Some("bench") if args.len() >= 3 => bench(&args[2]),
+        Some("toc") if args.len() == 3 => toc(&args[2], core),
+        Some("bench") if (3..=4).contains(&args.len()) => {
+            bench(&args[2], args.get(3).map(String::as_str), core)
+        }
         Some("decode") => {
             let rest: Vec<&String> = args[2..].iter().filter(|a| !a.starts_with('-')).collect();
             let fast = args.iter().any(|a| a == "--fast");
             let f32out = args.iter().any(|a| a == "--f32");
             if rest.len() == 2 {
-                decode(rest[0], rest[1], fast, f32out)
+                decode(rest[0], rest[1], fast, f32out, core)
             } else {
                 usage()
             }
@@ -52,7 +60,7 @@ fn run() -> ExitCode {
     }
 }
 
-fn bench(path: &str) -> ExitCode {
+fn bench(path: &str, rounds: Option<&str>, core: bool) -> ExitCode {
     let (data, track) = match load(path) {
         Ok(v) => v,
         Err(e) => {
@@ -60,7 +68,7 @@ fn bench(path: &str) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let rounds: usize = match std::env::args().nth(3) {
+    let rounds: usize = match rounds {
         None => 10,
         Some(raw) => match raw.parse() {
             Ok(value) if value > 0 && value <= 10000 => value,
@@ -82,6 +90,7 @@ fn bench(path: &str) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
+        dec.set_ajoc_core_signals(core);
         pcm.clear();
         let t = std::time::Instant::now();
         let mut produced = 0;
@@ -124,6 +133,7 @@ fn bench(path: &str) -> ExitCode {
 }
 
 fn usage() -> ExitCode {
+    eprintln!("optional: --core-signals decodes A-JOC downmix essence without object rendering");
     eprintln!("usage: baka-ac4 toc <input.mp4 | input.ac4>");
     eprintln!("       baka-ac4 decode [--fast] [--f32] <input.mp4 | input.ac4> <output.wav>");
     eprintln!("       --fast skips the QMF round trip for simple streams (slightly");
@@ -141,7 +151,7 @@ fn load(path: &str) -> Result<(Vec<u8>, mp4::Track), String> {
     Ok((data, track))
 }
 
-fn toc(path: &str) -> ExitCode {
+fn toc(path: &str, core: bool) -> ExitCode {
     let (data, track) = match load(path) {
         Ok(v) => v,
         Err(e) => {
@@ -157,6 +167,7 @@ fn toc(path: &str) -> ExitCode {
         }
     };
 
+    dec.set_ajoc_core_signals(core);
     println!("{{");
     println!(
         "  \"codec\": \"{}\", \"channels\": {}, \"timescale\": {}, \"samples\": {},",
@@ -176,7 +187,7 @@ fn toc(path: &str) -> ExitCode {
                 let feats = dec.features();
                 *tool_counts.entry(feature_key(&feats)).or_default() += 1;
                 format!(
-                    "{{ \"i\": {}, \"size\": {}, \"ok\": true, \"key\": {}, \"ch\": {}, \"rate\": {}, \"n\": {}, \"cm\": {}, \"sf\": [{}, {}, {}, {}] }}",
+                    "{{ \"i\": {}, \"size\": {}, \"ok\": true, \"key\": {}, \"ch\": {}, \"rate\": {}, \"n\": {}, \"cm\": {}, \"mask\": {}, \"output\": \"{}\", \"sf\": [{}, {}, {}, {}] }}",
                     i,
                     size,
                     f.key_frame,
@@ -184,6 +195,12 @@ fn toc(path: &str) -> ExitCode {
                     f.sample_rate,
                     f.nb_samples,
                     feats.codec_mode,
+                    f.channel_mask,
+                    if f.audio_kind == baka_ac4_core::AudioKind::AjocCoreSignals {
+                        "ajoc-core-signals"
+                    } else {
+                        "channels"
+                    },
                     feats.spec_frontend_l,
                     feats.spec_frontend_r,
                     feats.spec_frontend_m,
@@ -246,7 +263,7 @@ fn feature_key(f: &StreamFeatures) -> String {
     )
 }
 
-fn decode(path: &str, out_path: &str, fast: bool, f32out: bool) -> ExitCode {
+fn decode(path: &str, out_path: &str, fast: bool, f32out: bool, core: bool) -> ExitCode {
     let (data, track) = match load(path) {
         Ok(v) => v,
         Err(e) => {
@@ -262,6 +279,7 @@ fn decode(path: &str, out_path: &str, fast: bool, f32out: bool) -> ExitCode {
         }
     };
     dec.set_qmf_bypass(fast);
+    dec.set_ajoc_core_signals(core);
     let out = match File::create(out_path) {
         Ok(f) => f,
         Err(e) => {

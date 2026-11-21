@@ -74,7 +74,7 @@ pub fn decode_packets(packets: &[Vec<u8>]) -> Result<()> {
 }
 ```
 
-Packets may include the `0xAC40` / `0xAC41` sync header. The decoder returns `Ok(None)` while waiting for an iframe. Frame metadata includes the sample rate, channel mask, sample count and key-frame flag. `decode_frame()` is also available when an owned `Frame` is more convenient.
+Packets may include the `0xAC40` / `0xAC41` sync header. The decoder returns `Ok(None)` while waiting for an iframe. Frame metadata includes the audio kind, sample rate, channel mask, sample count and key-frame flag. `decode_frame()` is also available when an owned `Frame` is more convenient.
 
 ## Support
 
@@ -85,9 +85,16 @@ Packets may include the `0xAC40` / `0xAC41` sync header. The decoder returns `Ok
 | A-SPX, including balance mode | Supported on tested broadcast streams |
 | SSF | Implemented; tested with controlled stream mutations |
 | ACPL | Implemented paths; successful decoding still needs real-stream validation |
-| Object-coded audio / A-JOC object rendering | Not supported |
+| A-JOC core downmix signals | Explicit `set_ajoc_core_signals(true)` / CLI `--core-signals`; tested 448/1500 kbit/s streams |
+| Object reconstruction / A-JOC object rendering | Not supported; raw core signals are not rendered speaker feeds |
 
 Not every AC-4 profile or channel layout has been validated. The CLI writes basic WAV headers; applications that need speaker-position metadata should use the core's channel mask.
+
+The optional A-JOC core-signal mode exposes downmix essence for analysis and
+custom renderers. `AudioKind::AjocCoreSignals` with `channel_mask == 0` identifies
+unanchored signals. Do not infer speaker positions from their count or route
+those planes directly as 7.1/7.1.4. The default decoder continues to reject
+object-coded streams that it cannot render. See [delivery status](docs/AC4_DELIVERY.md).
 
 ## Integration
 

@@ -12,5 +12,5 @@ pub mod qmf;
 pub mod tables;
 pub mod vlc;
 
-pub use decoder::{Ac4Decoder, Frame, FrameInfo, StreamFeatures};
+pub use decoder::{Ac4Decoder, AudioKind, Frame, FrameInfo, StreamFeatures};
 pub use error::{Ac4Error, Result};

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add explicit A-JOC core-signal decoding for tested 448/1500 kbit/s streams,
+  indexed audio substream selection, variable channel elements and bounded reads.
+- Report `AudioKind` and preserve zero speaker masks for unanchored signals;
+  full object reconstruction/rendering remains unsupported.
+
 - Reject truncated MP4 sample payloads, incomplete sample mappings and oversized
   table counts before decoding; CLI commands report an error instead of panicking.
 - Handle extended-size MP4 boxes and correctly recover track timescale/duration.

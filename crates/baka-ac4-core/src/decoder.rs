@@ -507,6 +507,7 @@ pub struct SubstreamInfo {
     static_dmx: i32,
     audio_ndot: [i32; 4],
     n_fullband_dmx_signals: i32,
+    core_bed_mask: u64,
     n_fullband_upmix_signals: i32,
 
     n_objects: i32,
@@ -946,10 +947,21 @@ impl Default for State {
     }
 }
 
+/// Meaning of the decoded PCM planes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AudioKind {
+    /// Speaker feeds in ascending channel-mask bit order.
+    Channels,
+    /// A-JOC downmix essence; unanchored planes are not speaker feeds.
+    AjocCoreSignals,
+}
+
 /// Layout information returned by [`Ac4Decoder::decode_frame_into`] when a
 /// frame was produced into a caller-owned buffer.
 pub struct FrameInfo {
+    pub audio_kind: AudioKind,
     pub sample_rate: u32,
+    /// WAVE speaker mask, or zero for unanchored A-JOC core signals.
     pub channel_mask: u64,
     pub nb_samples: usize,
     pub key_frame: bool,
@@ -970,8 +982,9 @@ pub struct StreamFeatures {
 
 /// A decoded audio frame: planar f32 samples (one `Vec` per channel).
 pub struct Frame {
+    pub audio_kind: AudioKind,
     pub sample_rate: u32,
-    /// Bitmask of the output channels (bit i = channel i).
+    /// WAVE speaker mask. Zero denotes unanchored A-JOC core signals.
     pub channel_mask: u64,
     pub nb_samples: usize,
     /// True when this frame is a sync/iframe (all information self-contained).
@@ -990,6 +1003,8 @@ pub struct Ac4Decoder {
     /// (~76 dB vs ~82 dB SNR against the filterbank output on real
     /// streams).
     qmf_bypass: bool,
+    ajoc_core: bool,
+    variable_pairs: Vec<(usize, usize)>,
 }
 
 impl Ac4Decoder {
@@ -1006,6 +1021,8 @@ impl Ac4Decoder {
 
         Ok(Ac4Decoder {
             qmf_bypass: false,
+            ajoc_core: false,
+            variable_pairs: Vec::with_capacity(6),
             tables: Tables {
                 qmf_ana: QmfAnalysis::new(),
                 qmf_syn: QmfSynthesis::new(),
@@ -1476,34 +1493,43 @@ impl Ac4Decoder {
         Ok(())
     }
 
-    fn ac4_bed_dyn_obj_assignment(&mut self, gb: &mut BitReader, n_signals: i32) {
-        if gb.get_bits1() == 0 {
-            // b_dyn_objects_only
-            if gb.get_bits1() != 0 {
-                // b_isf
-                gb.skip_bits(3); // isf_config
-            } else if gb.get_bits1() != 0 {
-                // b_ch_assign_code
-                gb.skip_bits(3); // bed_chan_assign_code
-            } else if gb.get_bits1() != 0 {
-                // b_chan_assign_mask
-                if gb.get_bits1() != 0 {
-                    // b_nonstd_bed_channel_assignment
-                    gb.skip_bits(17); // nonstd_bed_channel_assignment_mask
-                } else {
-                    gb.skip_bits(10); // std_bed_channel_assignment_mask
-                }
-            } else {
-                let n_bed_signals = if n_signals > 1 {
-                    gb.get_bits_long(floor_log2(n_signals)) as i32 + 1
-                } else {
-                    1
-                };
-                for _ in 0..n_bed_signals {
-                    gb.skip_bits(4);
-                }
-            }
+    // Returns a speaker mask only for completely speaker-anchored beds.
+    // Dynamic/ISF assignments remain distinct from a conventional channel bed.
+    fn ac4_bed_dyn_obj_assignment(&mut self, gb: &mut BitReader, n_signals: i32) -> Result<u64> {
+        if gb.get_bits1() != 0 {
+            return Ok(0);
         }
+        if gb.get_bits1() != 0 {
+            gb.skip_bits(3);
+            return Ok(0);
+        }
+        const BEDS: [u64; 8] = [0x3, 0x7, 0x607, 0, 0x2d607, 0x637, 0, 0x2d637];
+        if gb.get_bits1() != 0 {
+            return Ok(BEDS[gb.get_bits(3) as usize]);
+        }
+        if gb.get_bits1() != 0 {
+            // Mask positions are transmitted MSB first. Keep unknown speaker
+            // positions unsupported instead of inventing a channel order.
+            if gb.get_bits1() != 0 {
+                gb.skip_bits(17);
+            } else {
+                gb.skip_bits(10);
+            }
+            return Ok(0);
+        }
+        let n_bed_signals = if n_signals > 1 {
+            let width = 32 - ((n_signals - 1) as u32).leading_zeros();
+            gb.get_bits(width) as i32 + 1
+        } else {
+            1
+        };
+        if n_bed_signals > n_signals {
+            return Err(invalid("invalid bed signal count"));
+        }
+        for _ in 0..n_bed_signals {
+            gb.skip_bits(4);
+        }
+        Ok(0)
     }
 
     fn ac4_oamd_common_data(&mut self, gb: &mut BitReader) {
@@ -1535,10 +1561,11 @@ impl Ac4Decoder {
 
         if ssi.static_dmx != 0 {
             ssi.n_fullband_dmx_signals = 5;
+            ssi.core_bed_mask = 0x607;
         } else {
             ssi.n_fullband_dmx_signals = gb.get_bits(4) as i32 + 1;
             let n = ssi.n_fullband_dmx_signals;
-            self.ac4_bed_dyn_obj_assignment(gb, n);
+            ssi.core_bed_mask = self.ac4_bed_dyn_obj_assignment(gb, n)?;
         }
 
         if gb.get_bits1() != 0 {
@@ -1556,7 +1583,7 @@ impl Ac4Decoder {
         }
 
         let n = ssi.n_fullband_upmix_signals;
-        self.ac4_bed_dyn_obj_assignment(gb, n);
+        let _ = self.ac4_bed_dyn_obj_assignment(gb, n)?;
 
         let fs_index = self.st.fs_index;
         if fs_index == 1 && gb.get_bits1() != 0 {
@@ -1683,6 +1710,9 @@ impl Ac4Decoder {
         }
 
         self.st.ssgroup[g_idx].channel_coded = gb.get_bits1() as i32;
+        if self.ajoc_core && self.st.ssgroup[g_idx].channel_coded == 0 && n_lf_substreams != 1 {
+            return Err(unsupported("multiple object substreams in one group"));
+        }
         self.st.ssgroup[g_idx].ajoc = 0;
         if self.st.ssgroup[g_idx].channel_coded != 0 {
             for _sus in 0..n_lf_substreams {
@@ -4738,19 +4768,96 @@ impl Ac4Decoder {
         }
     }
 
+    fn variable_channel_element(
+        &mut self,
+        gb: &mut BitReader,
+        count: usize,
+        lfe: bool,
+        iframe: i32,
+    ) -> Result<()> {
+        let first = usize::from(lfe);
+        if count == 0 || count + first > 12 {
+            return Err(unsupported("A-JOC core signal count"));
+        }
+        self.variable_pairs.clear();
+        self.st.substream.compand_on.fill(0);
+        self.st.substream.sync_flag = 0;
+        self.st.substream.codec_mode = gb.get_bits1() as i32;
+        if self.st.substream.codec_mode == enums::CM_ASPX {
+            if iframe != 0 {
+                self.aspx_config(gb);
+            }
+            if count <= 5 {
+                self.companding_control(gb, count as i32)?;
+                if lfe {
+                    self.st.substream.compand_on.copy_within(0..count, 1);
+                    self.st.substream.compand_on[0] = 0;
+                }
+            }
+        }
+        if lfe {
+            self.mono_data(gb, 0, true, iframe)?;
+        }
+        let pairs = count / 2;
+        let regular_pairs = if count % 2 == 1 && count > 1 {
+            pairs - 1
+        } else {
+            pairs
+        };
+        for p in 0..regular_pairs {
+            let ch = first + p * 2;
+            self.two_channel_data(gb, &[ch, ch + 1], p, iframe)?;
+            if self.st.substream.mdct_stereo_proc[p] != 0 {
+                self.variable_pairs.push((ch, ch + 1));
+            }
+        }
+        if count == 1 {
+            self.mono_data(gb, first, false, iframe)?;
+        } else if count % 2 == 1 {
+            let ch = first + regular_pairs * 2;
+            if gb.get_bits1() == 0 {
+                self.two_channel_data(gb, &[ch, ch + 1], regular_pairs, iframe)?;
+                if self.st.substream.mdct_stereo_proc[regular_pairs] != 0 {
+                    self.variable_pairs.push((ch, ch + 1));
+                }
+                self.mono_data(gb, ch + 2, false, iframe)?;
+            } else {
+                return Err(unsupported("A-JOC three-channel core grouping"));
+            }
+        }
+        if self.st.substream.codec_mode == enums::CM_ASPX {
+            for p in 0..pairs {
+                self.aspx_data_2ch(gb, first + p * 2, first + p * 2 + 1, iframe)?;
+            }
+            if count % 2 == 1 {
+                self.aspx_data_1ch(gb, first + count - 1, iframe)?;
+            }
+        }
+        Ok(())
+    }
+
     fn ac4_substream(
         &mut self,
         gb: &mut BitReader,
         ssg_idx: usize,
         substream_size: i32,
     ) -> Result<()> {
-        let mut audio_size = gb.get_bits(15) as i32;
-        if gb.get_bits1() != 0 {
-            audio_size += Self::variable_bits(gb, 7) << 15;
+        if substream_size > 0 && substream_size as i64 * 8 > gb.bits_left() {
+            return Err(invalid("truncated audio substream"));
         }
-        if audio_size > 131072 || (substream_size > 0 && audio_size > substream_size) {
+        let header_start = gb.bits_count();
+        let mut audio_size = gb.get_bits(15) as i64;
+        if gb.get_bits1() != 0 {
+            audio_size += (Self::variable_bits(gb, 7) as i64) << 15;
+        }
+        let header_bytes = (gb.bits_count() - header_start).div_ceil(8) as i64;
+        if !(0..=131072).contains(&audio_size)
+            || audio_size * 8 > gb.bits_left()
+            || (substream_size > 0 && audio_size + header_bytes > substream_size as i64)
+        {
             return Err(invalid("invalid audio_size"));
         }
+        let audio_size = audio_size as i32;
 
         gb.align();
 
@@ -4759,9 +4866,21 @@ impl Ac4Decoder {
             let channel_mode = self.st.ssgroup[ssg_idx].ssinfo.channel_mode;
             let iframe0 = self.st.ssgroup[ssg_idx].ssinfo.iframe[0];
             self.audio_data(gb, channel_mode, iframe0)?;
-        } else if self.st.ssgroup[ssg_idx].ajoc != 0 {
-            //audio_data_ajoc();
-            return Err(unsupported("ajoc substream"));
+        } else if self.st.ssgroup[ssg_idx].ajoc != 0 && self.ajoc_core {
+            let ssi = self.st.ssgroup[ssg_idx].ssinfo.clone();
+            let iframe = ssi.audio_ndot[0];
+            if ssi.static_dmx != 0 {
+                self.audio_data(gb, if ssi.lfe != 0 { 4 } else { 3 }, iframe)?;
+            } else {
+                let count = ssi.n_fullband_dmx_signals as usize;
+                if gb.get_bits1() != 0 {
+                    gb.skip_bits_long(count as i64);
+                }
+                self.variable_channel_element(gb, count, ssi.lfe != 0, iframe)?;
+            }
+            // Core decoding ends after the downmix essence. The remaining
+            // audio_size bytes contain reconstruction and object metadata.
+            // They are bounded and skipped below, never treated as PCM.
         } else {
             //audio_data_objs();
             return Err(unsupported("objects substream"));
@@ -4769,15 +4888,12 @@ impl Ac4Decoder {
 
         gb.align();
         let consumed = (gb.bits_count() >> 3) as i32 - offset;
-        // C logs overread/underread warnings here; decoding continues.
+        if self.ajoc_core && self.st.ssgroup[ssg_idx].ajoc != 0 && consumed > audio_size {
+            return Err(invalid("A-JOC essence exceeds audio_size"));
+        }
 
         if consumed < audio_size {
-            // C checks the skipped padding for non-zero bytes and warns; the
-            // reads themselves must still be consumed from the bitstream.
-            let mut _non_zero = 0;
-            for _ in consumed..audio_size {
-                _non_zero += (gb.get_bits(8) != 0) as i32;
-            }
+            gb.skip_bits_long((audio_size - consumed) as i64 * 8);
         }
 
         gb.align();
@@ -6330,6 +6446,7 @@ impl Ac4Decoder {
         let mut data: Vec<Vec<f32>> = Vec::new();
         let info = self.decode_frame_into(packet, &mut data)?;
         Ok(info.map(|i| Frame {
+            audio_kind: i.audio_kind,
             sample_rate: i.sample_rate,
             channel_mask: i.channel_mask,
             nb_samples: i.nb_samples,
@@ -6394,11 +6511,20 @@ impl Ac4Decoder {
         if self.st.have_iframe == 0 {
             return Ok(None);
         }
-
-        if self.st.version == 2 && self.st.ssgroup[0].channel_coded == 0 {
+        let ajoc_core = self.st.version == 2
+            && self.st.ssgroup[0].channel_coded == 0
+            && self.st.ssgroup[0].ajoc != 0
+            && self.ajoc_core;
+        if self.st.version == 2 && self.st.ssgroup[0].channel_coded == 0 && !ajoc_core {
             return Err(unsupported("object coding"));
         }
 
+        if ajoc_core
+            && (self.st.ssgroup[0].ssinfo.sf_multiplier != 0
+                || self.st.pinfo[0].frame_rate_factor != 1)
+        {
+            return Err(unsupported("A-JOC high-rate extension"));
+        }
         let presentation = self
             .st
             .target_presentation
@@ -6414,8 +6540,45 @@ impl Ac4Decoder {
             return Err(invalid("invalid channel mode"));
         }
 
-        let (_, mask) = CHANNEL_MODE_LAYOUTS[channel_mode as usize];
-        let nb_channels = mask.count_ones() as usize;
+        let (_, mut mask) = CHANNEL_MODE_LAYOUTS[channel_mode as usize];
+        if ajoc_core {
+            let ssi = &self.st.ssgroup[0].ssinfo;
+            if !(0..self.st.nb_substreams).contains(&ssi.substream_index) {
+                return Err(invalid("invalid A-JOC substream index"));
+            }
+            mask = ssi.core_bed_mask;
+            if mask != 0 && mask.count_ones() as i32 != ssi.n_fullband_dmx_signals {
+                return Err(unsupported("A-JOC core bed assignment"));
+            }
+            if ssi.lfe != 0 && mask != 0 {
+                mask |= 8;
+            }
+            if mask.count_ones() > 12 {
+                return Err(unsupported("A-JOC core layout"));
+            }
+            let first = usize::from(ssi.lfe != 0);
+            let mut index = first;
+            // AC-4 bed order differs from WAVE order: surrounds precede backs.
+            for speaker in [0, 1, 2, 9, 10, 4, 5, 12, 14, 11, 16, 15, 17] {
+                if mask & (1 << speaker) != 0 {
+                    self.st.ch_map[speaker] = index as i32;
+                    index += 1;
+                }
+            }
+            if first != 0 {
+                self.st.ch_map[chan::LOW_FREQUENCY] = 0;
+            }
+        }
+        let nb_channels = if ajoc_core && mask == 0 {
+            let ssi = &self.st.ssgroup[0].ssinfo;
+            let count = ssi.n_fullband_dmx_signals + ssi.lfe;
+            if !(1..=12).contains(&count) {
+                return Err(unsupported("A-JOC core signal count"));
+            }
+            count as usize
+        } else {
+            mask.count_ones() as usize
+        };
 
         let (num, den) = self.st.resampling_ratio;
         if num != 0 {
@@ -6426,6 +6589,18 @@ impl Ac4Decoder {
         gb.skip_bits_long(self.st.payload_base as i64 * 8);
 
         for i in 0..self.st.nb_substreams as usize {
+            if ajoc_core {
+                let target = self.st.ssgroup[0].ssinfo.substream_index;
+                if i as i32 == target {
+                    self.ac4_substream(gb, 0, self.st.substream_size[i])?;
+                    break;
+                }
+                if self.st.substream_size[i] <= 0 {
+                    return Err(invalid("missing preceding substream size"));
+                }
+                gb.skip_bits_long(self.st.substream_size[i] as i64 * 8);
+                continue;
+            }
             let substream_type = self.st.substream_type[i];
             match substream_type {
                 enums::ST_SUBSTREAM => {
@@ -6447,11 +6622,27 @@ impl Ac4Decoder {
             self.scale_spec(ch);
         }
 
-        match channel_mode {
-            0 => {}
-            1 => self.stereo_processing(),
-            3 | 4 => self.m5channel_processing(),
-            _ => {}
+        if ajoc_core && self.st.ssgroup[0].ssinfo.static_dmx == 0 {
+            for p in 0..self.variable_pairs.len() {
+                let (left, right) = self.variable_pairs[p];
+                self.two_channel_processing(left, right);
+            }
+        } else {
+            let mode = if ajoc_core {
+                if self.st.ssgroup[0].ssinfo.lfe != 0 {
+                    4
+                } else {
+                    3
+                }
+            } else {
+                channel_mode
+            };
+            match mode {
+                0 => {}
+                1 => self.stereo_processing(),
+                3 | 4 => self.m5channel_processing(),
+                _ => {}
+            }
         }
 
         let qmf_bypass = self.qmf_bypass && self.st.substream.codec_mode < enums::CM_ASPX;
@@ -6475,8 +6666,16 @@ impl Ac4Decoder {
             }
         }
         for ch in 0..nb_channels {
-            let sch = channel_from_index(mask, ch);
-            let dch = self.st.ch_map[sch];
+            let sch = if mask == 0 {
+                0
+            } else {
+                channel_from_index(mask, ch)
+            };
+            let dch = if mask == 0 {
+                ch as i32
+            } else {
+                self.st.ch_map[sch]
+            };
             debug_assert!((0..12).contains(&dch));
             let dch = dch as usize;
             self.decode_channel(dch, &mut data[ch], qmf_bypass);
@@ -6486,11 +6685,24 @@ impl Ac4Decoder {
         self.st.first_frame = 0;
 
         Ok(Some(FrameInfo {
+            audio_kind: if ajoc_core {
+                AudioKind::AjocCoreSignals
+            } else {
+                AudioKind::Channels
+            },
             sample_rate: sample_rate as u32,
             channel_mask: mask,
             nb_samples,
             key_frame,
         }))
+    }
+
+    /// Enables A-JOC core signal decoding.
+    /// Unanchored downmix signals have channel_mask == 0 and are not speaker
+    /// feeds. This does not reconstruct or render transmitted upmix objects.
+    /// Disabled by default so callers explicitly choose core output.
+    pub fn set_ajoc_core_signals(&mut self, enable: bool) {
+        self.ajoc_core = enable;
     }
 
     /// Enables or disables the QMF round-trip shortcut for simple streams
@@ -6627,11 +6839,6 @@ fn num_sfb_48(transf_length: i32) -> i32 {
         96 => 12,
         _ => panic!("invalid transf_length {transf_length}"),
     }
-}
-
-fn floor_log2(x: i32) -> u32 {
-    debug_assert!(x > 0);
-    31 - (x as u32).leading_zeros()
 }
 
 fn fcomplex_mul(x: f32, yi: f32, u: f32, vi: f32) -> (f32, f32) {
