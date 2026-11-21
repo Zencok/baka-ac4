@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Remove redundant Cargo homepage metadata so strict regression checks stay
+  warning-free on the pinned toolchain.
+
 - Preserve multichannel speaker masks and PCM/float subtypes in extensible WAV;
   reject format changes, non-finite samples, empty output and RIFF overflow.
 
