@@ -20,7 +20,7 @@
 ## 快速开始
 
 ```sh
-cargo install baka-ac4-cli --version 0.2.0 --locked
+cargo install baka-ac4-cli --version 0.2.1 --locked
 
 # 将声道编码的 AC-4 转为 WAV
 baka-ac4 decode input.mp4 output.wav

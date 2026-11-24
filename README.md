@@ -20,7 +20,7 @@ Requires Rust **1.100.0**, pinned in `rust-toolchain.toml`.
 ## Quick start
 
 ```sh
-cargo install baka-ac4-cli --version 0.2.0 --locked
+cargo install baka-ac4-cli --version 0.2.1 --locked
 
 # Convert channel-coded AC-4 to WAV
 baka-ac4 decode input.mp4 output.wav

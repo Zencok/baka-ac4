@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1 — 2026-11-24
+
+- Reuse speaker geometry and contiguous probe buffers in A-JOC spread panning,
+  reducing temporary allocations and repeated neighbor searches.
+- Preserve gain bits, speaker order, ramps and supported stream/layout behavior.
+- Add original-algorithm comparisons, allocation regressions and an opt-in host
+  benchmark. See PERFORMANCE.md for measurements and validation limits.
+- Keep core and CLI package versions aligned; no public API changes.
+
 ## 0.2.0 - 2026-11-22
 
 - Add opt-in A-JOC object reconstruction for tested 448/1500 kbit/s streams:
