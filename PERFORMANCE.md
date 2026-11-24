@@ -93,6 +93,6 @@ cargo test --locked -p baka-ac4-core --release --lib fixed_band_map_measurement 
 
 Validation: workspace fmt/check, strict all-target Clippy, and 83 workspace
 release tests passed (six optional/manual tests ignored). The manual benchmark
-and its bitwise reference test passed separately. This optimization is not in
-published 0.2.1 or the application's locked AC-4 dependency; no new package,
-APK or device acceptance is claimed.
+and its bitwise reference test passed separately. Release 0.2.2 includes this
+optimization. Applications must update their locked dependency and rebuild;
+publication does not establish a new APK or device acceptance.

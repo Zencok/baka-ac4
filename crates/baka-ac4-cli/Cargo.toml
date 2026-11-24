@@ -20,4 +20,4 @@ name = "baka-ac4"
 path = "src/main.rs"
 
 [dependencies]
-baka-ac4-core = { version = "0.2.1", path = "../baka-ac4-core" }
+baka-ac4-core = { version = "0.2.2", path = "../baka-ac4-core" }

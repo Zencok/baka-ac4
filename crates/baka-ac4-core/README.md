@@ -64,9 +64,9 @@ For custom DSP, `ajoc::reconstruction::Reconstructor` accepts a decorrelation ba
 
 The host owns demuxing, timestamps, source access and playback devices. This library does not provide networking or DRM decryption.
 
-Source after 0.2.1 resolves the decorrelator's fixed 15-band mapping at compile
+Release 0.2.2 resolves the decorrelator's fixed 15-band mapping at compile
 time, preserving filter, ducking and PCM arithmetic. See [host measurements and
-validation limits](../../PERFORMANCE.md). Published 0.2.1 predates this change.
+validation limits](../../PERFORMANCE.md).
 
 ## Supported scope
 

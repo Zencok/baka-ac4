@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.2 - 2026-11-24
+
+- Precompute the decorrelator's fixed 15-band mapping in a 64-byte table,
+  eliminating 128 repeated binary searches per time slot.
+- Preserve filter, ducking and float accumulation behavior without new state
+  or runtime allocations.
+- Add stateful bitwise comparisons against the original mapping and an opt-in
+  host benchmark. No public API or stream/layout support changes.
+- Keep core and CLI versions aligned. See PERFORMANCE.md for validation limits.
+
 ## 0.2.1 — 2026-11-24
 
 - Reuse speaker geometry and contiguous probe buffers in A-JOC spread panning,

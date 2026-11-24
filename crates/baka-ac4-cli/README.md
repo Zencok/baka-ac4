@@ -5,7 +5,7 @@ Convert AC-4 files to WAV, inspect frame metadata and measure decoding performan
 ## Install
 
 ```sh
-cargo install baka-ac4-cli --version 0.2.1 --locked
+cargo install baka-ac4-cli --version 0.2.2 --locked
 ```
 
 Requires Rust 1.100.0.
