@@ -39,7 +39,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
 #[global_allocator]
 static ALLOCATOR: CountingAllocator = CountingAllocator;
 
-fn assert_no_allocations(run: impl FnOnce()) {
+fn count_allocations(run: impl FnOnce()) -> usize {
     struct StopTracking;
     impl Drop for StopTracking {
         fn drop(&mut self) {
@@ -51,11 +51,64 @@ fn assert_no_allocations(run: impl FnOnce()) {
     let guard = StopTracking;
     run();
     drop(guard);
+    ALLOCATIONS.get()
+}
+
+fn assert_no_allocations(run: impl FnOnce()) {
     assert_eq!(
-        ALLOCATIONS.get(),
+        count_allocations(run),
         0,
         "transform allocated after construction"
     );
+}
+
+#[test]
+fn spread_renderer_does_not_allocate_per_axis_probe() {
+    use baka_ac4_core::ajoc::{
+        AjocMetadata, ObjectMatrix,
+        oamd::{ObjectProperties, ObjectTiming, ObjectUpdate},
+        render::{RenderOptions, SpeakerLayout, SpeakerRenderer},
+    };
+
+    let mut properties = ObjectProperties {
+        active: true,
+        gain_db: Some(0),
+        position: [0.13, 0.72, 0.36],
+        elevation: true,
+        trim_disabled: true,
+        ..Default::default()
+    };
+    properties.other.width = [0.73, 0.21, 0.49];
+    let metadata = AjocMetadata {
+        objects: vec![ObjectMatrix::default()],
+        upmix_metadata: vec![vec![ObjectUpdate {
+            properties,
+            timing: ObjectTiming {
+                sample: 0,
+                ramp: 23,
+            },
+        }]],
+        ..Default::default()
+    };
+    let mut renderer =
+        SpeakerRenderer::new(RenderOptions::new(SpeakerLayout::Surround714)).unwrap();
+    let objects = vec![(0..2048).map(|i| (i as f32 * 0.17).sin()).collect()];
+    let mut output = Vec::new();
+    renderer
+        .process_into(&metadata, &objects, &mut output)
+        .unwrap();
+    let allocations = count_allocations(|| {
+        renderer
+            .process_into(&metadata, &objects, &mut output)
+            .unwrap();
+        std::hint::black_box(&output);
+    });
+    eprintln!("7.1.4 spread renderer allocations per warmed update: {allocations}");
+    assert!(
+        allocations <= 24,
+        "axis probes must not allocate: {allocations}"
+    );
+    assert!(output.iter().flatten().all(|v| v.is_finite()));
 }
 
 #[test]

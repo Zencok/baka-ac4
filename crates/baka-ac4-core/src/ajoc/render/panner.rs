@@ -85,6 +85,64 @@ fn fade(position: f64, size: f64) -> f64 {
     ((position.min(1. - position)) / size.max(0.2)).clamp(0., 1.)
 }
 
+struct AxisSpeaker {
+    here: f64,
+    lower: Option<f64>,
+    upper: Option<f64>,
+}
+
+impl AxisSpeaker {
+    fn gain(&self, value: f64) -> f64 {
+        let here = self.here;
+        let other = if here >= value {
+            self.lower
+        } else {
+            self.upper
+        };
+        match other {
+            None => 1.,
+            Some(_) if here == value => 1.,
+            Some(v) if v == value => 0.,
+            Some(v) if (v - value).signum() == (here - value).signum() && here != value => 0.,
+            Some(v) => ((here - value) / (v - here) * FRAC_PI_2).cos().max(0.),
+        }
+    }
+}
+
+fn prepare_axis(speakers: &[Speaker], axis: usize) -> Vec<AxisSpeaker> {
+    speakers
+        .iter()
+        .map(|speaker| {
+            let here = speaker.position[axis];
+            let mut lower: Option<f64> = None;
+            let mut upper: Option<f64> = None;
+            for candidate in speakers.iter().filter(|candidate| {
+                (axis + 1..3).all(|a| (candidate.position[a] - speaker.position[a]).abs() < 0.001)
+            }) {
+                let value = candidate.position[axis];
+                if value < here {
+                    lower = Some(lower.map_or(value, |previous| previous.max(value)));
+                } else if value > here {
+                    upper = Some(upper.map_or(value, |previous| previous.min(value)));
+                }
+            }
+            AxisSpeaker { here, lower, upper }
+        })
+        .collect()
+}
+
+fn axis_probes(speakers: &[Speaker], axis: usize, count: usize) -> Vec<f64> {
+    let neighbours = prepare_axis(speakers, axis);
+    let mut probes = Vec::with_capacity((count + 2) * speakers.len());
+    for value in (0..count)
+        .map(|i| i as f64 / (count - 1) as f64)
+        .chain([0., 1.])
+    {
+        probes.extend(neighbours.iter().map(|speaker| speaker.gain(value)));
+    }
+    probes
+}
+
 fn size(speakers: &[Speaker], position: [f64; 3], width: [f64; 3]) -> Vec<f64> {
     let sizes = width.map(scale);
     let mut sorted = sizes;
@@ -97,12 +155,17 @@ fn size(speakers: &[Speaker], position: [f64; 3], width: [f64; 3]) -> Vec<f64> {
     };
     let counts = [20, 20, 8];
     let lower = std::array::from_fn::<_, 3, _>(|a| sizes[a].max(2. / (counts[a] - 1) as f64));
+    // Geometry is fixed throughout the 48 interior and six boundary probes.
+    // Prepare neighbours once and store each axis's gains contiguously, rather
+    // than allocating a separate gain vector for every probe.
+    let axes = std::array::from_fn::<_, 3, _>(|a| axis_probes(speakers, a, counts[a]));
     let weighted = std::array::from_fn::<_, 3, _>(|a| {
         let mut sum = vec![0.; speakers.len()];
         for i in 0..counts[a] {
             let v = i as f64 / (counts[a] - 1) as f64;
             let w = weight(v, position[a], lower[a]);
-            for (target, gain) in sum.iter_mut().zip(axis(speakers, a, v)) {
+            let gains = &axes[a][i * speakers.len()..(i + 1) * speakers.len()];
+            for (target, gain) in sum.iter_mut().zip(gains) {
                 *target += (gain * w).powf(power);
             }
         }
@@ -114,8 +177,10 @@ fn size(speakers: &[Speaker], position: [f64; 3], width: [f64; 3]) -> Vec<f64> {
     normalize(&mut inside);
     let mut boundary = vec![0.; speakers.len()];
     for a in 0..3 {
-        for edge in [0., 1.] {
-            for (j, gain) in axis(speakers, a, edge).iter().enumerate() {
+        for (edge_index, edge) in [0., 1.].into_iter().enumerate() {
+            let probe = counts[a] + edge_index;
+            let gains = &axes[a][probe * speakers.len()..(probe + 1) * speakers.len()];
+            for (j, gain) in gains.iter().enumerate() {
                 let others = (0..3)
                     .filter(|&b| b != a)
                     .map(|b| weighted[b][j])
@@ -141,3 +206,8 @@ fn size(speakers: &[Speaker], position: [f64; 3], width: [f64; 3]) -> Vec<f64> {
     normalize(&mut result);
     result
 }
+
+#[cfg(test)]
+mod reference;
+#[cfg(test)]
+mod tests;
