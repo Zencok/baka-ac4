@@ -1,8 +1,23 @@
 //! A-JOC decorrelation and transient ducking. ETSI TS 103 190-1 V1.3.1,
 //! 5.7.7.4, tables 197–200; TS 103 190-2 5.7.3.5 instance ordering.
 
-use super::reconstruction::{Decorrelation, QmfSlot, parameter_band};
+use super::reconstruction::{Decorrelation, PARAMETER_BAND_ENDS_15, QmfSlot};
 use crate::error::{Result, invalid};
+
+// This backend always uses 15 parameter bands. Share the transmitted band's
+// boundaries with the generic mapper, but resolve all 64 indices at compile time.
+const PARAMETER_BANDS: [u8; 64] = {
+    let mut map = [0; 64];
+    let (mut subband, mut band) = (0, 0);
+    while subband < map.len() {
+        while subband >= PARAMETER_BAND_ENDS_15[band] {
+            band += 1;
+        }
+        map[subband] = band as u8;
+        subband += 1;
+    }
+    map
+};
 
 // [D0/D1/D2][frequency region][denominator coefficient]. Numerator is reversed.
 const COEFFICIENTS: [[[f64; 8]; 3]; 3] = [
@@ -103,12 +118,12 @@ impl Instance {
         let filtered = self.filter(kind, input);
         let mut energy = [0.0; 15];
         for (sb, sample) in input.iter().enumerate() {
-            let pb = parameter_band(15, sb).expect("fixed band map");
+            let pb = usize::from(PARAMETER_BANDS[sb]);
             energy[pb] += sample.iter().map(|&v| f64::from(v).powi(2)).sum::<f64>();
         }
         let gains: [f64; 15] = std::array::from_fn(|pb| self.duckers[pb].gain(energy[pb]));
         for (sb, sample) in output.iter_mut().enumerate() {
-            let gain = gains[parameter_band(15, sb).expect("fixed band map")];
+            let gain = gains[usize::from(PARAMETER_BANDS[sb])];
             *sample = filtered[sb].map(|v| (v * gain) as f32);
         }
     }

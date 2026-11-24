@@ -65,3 +65,34 @@ Validation of the final upstream implementation: `cargo test -p baka-ac4-core
 --release` passed 71 tests with one manual benchmark ignored, including the
 default 20,000-iteration-per-phase robustness test. `cargo clippy -p
 baka-ac4-core --lib --tests -- -D warnings` passed without warnings.
+
+## 2026-11-24: fixed decorrelation parameter-band map
+
+Source after release 0.2.1 replaces 128 binary searches per decorrelator time
+slot with a compile-time 64-byte table. The table and the generic mapper share
+the same 15 parameter-band boundaries. Other band counts, public mapper errors,
+allpass filters, transient ducking, accumulation order and reset behavior are
+unchanged. No stream state, allocation or runtime initialization is added.
+
+A reference test retains the original search-based processing. All 64 table
+entries match the generic mapper. For each of D0/D1/D2, 512 successive slots
+of impulses, silence, signed zero and varying complex inputs produce identical
+float32 output bits, including filter/ducker history across ring wraparound.
+Existing seven-instance independence and invalid-input/reset tests also pass.
+
+Windows x86-64, Rust 1.100.0 release host timing: seven alternating rounds of
+4,096 slots measured a median of 4.130 ms for the original searches and 3.456 ms
+for table lookup (about 16% less time for this decorrelation microbenchmark).
+The measured region includes allpass filtering and ducking, excludes state
+construction, and asserts no timing threshold. It does not measure whole-decoder
+throughput, device playback or battery savings. Reproduce with:
+
+```powershell
+cargo test --locked -p baka-ac4-core --release --lib fixed_band_map_measurement -- --ignored --nocapture
+```
+
+Validation: workspace fmt/check, strict all-target Clippy, and 83 workspace
+release tests passed (six optional/manual tests ignored). The manual benchmark
+and its bitwise reference test passed separately. This optimization is not in
+published 0.2.1 or the application's locked AC-4 dependency; no new package,
+APK or device acceptance is claimed.

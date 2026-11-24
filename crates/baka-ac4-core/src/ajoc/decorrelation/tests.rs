@@ -1,4 +1,79 @@
 use super::*;
+use crate::ajoc::reconstruction::parameter_band;
+
+// Original search-based processing; filter arithmetic and ducking are unchanged.
+fn reference_process(state: &mut Instance, kind: usize, input: &QmfSlot, output: &mut QmfSlot) {
+    let filtered = state.filter(kind, input);
+    let mut energy = [0.0; 15];
+    for (sb, sample) in input.iter().enumerate() {
+        let pb = parameter_band(15, sb).expect("fixed band map");
+        energy[pb] += sample.iter().map(|&v| f64::from(v).powi(2)).sum::<f64>();
+    }
+    let gains: [f64; 15] = std::array::from_fn(|pb| state.duckers[pb].gain(energy[pb]));
+    for (sb, sample) in output.iter_mut().enumerate() {
+        let gain = gains[parameter_band(15, sb).expect("fixed band map")];
+        *sample = filtered[sb].map(|v| (v * gain) as f32);
+    }
+}
+
+#[test]
+fn fixed_band_map_and_stateful_output_match_original_search() {
+    for (sb, &band) in PARAMETER_BANDS.iter().enumerate() {
+        assert_eq!(usize::from(band), parameter_band(15, sb).unwrap());
+    }
+    for kind in 0..3 {
+        let mut original = Instance::default();
+        let mut optimized = Instance::default();
+        for slot in 0..512 {
+            let input = std::array::from_fn(|sb| match slot % 64 {
+                0 => [1.0, -2.0],
+                1..=15 => [0.0, -0.0],
+                _ => [
+                    ((slot * 31 + sb * 7) % 257) as f32 / 128.0 - 1.0,
+                    ((slot * 17 + sb * 13) % 251) as f32 / 256.0 - 0.5,
+                ],
+            });
+            let (mut a, mut b) = ([[0.0; 2]; 64], [[0.0; 2]; 64]);
+            reference_process(&mut original, kind, &input, &mut a);
+            optimized.process(kind, &input, &mut b);
+            assert_eq!(
+                a.map(|v| v.map(f32::to_bits)),
+                b.map(|v| v.map(f32::to_bits))
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "manual host timing; run release with --ignored --nocapture"]
+fn fixed_band_map_measurement() {
+    type Process = fn(&mut Instance, usize, &QmfSlot, &mut QmfSlot);
+    let input = std::array::from_fn(|sb| [sb as f32 / 64.0, -0.5]);
+    let mut timings = [[std::time::Duration::ZERO; 2]; 7];
+    for (round, times) in timings.iter_mut().enumerate() {
+        for index in [round % 2, 1 - round % 2] {
+            let process: Process = [reference_process, Instance::process][index];
+            let mut state = Instance::default();
+            let mut output = [[0.0; 2]; 64];
+            let start = std::time::Instant::now();
+            for slot in 0..4096 {
+                process(
+                    &mut state,
+                    slot % 3,
+                    std::hint::black_box(&input),
+                    &mut output,
+                );
+                std::hint::black_box(&output);
+            }
+            times[index] = start.elapsed();
+        }
+    }
+    for (index, label) in ["search", "lookup"].into_iter().enumerate() {
+        let mut times: [_; 7] = std::array::from_fn(|round| timings[round][index]);
+        times.sort();
+        eprintln!("{label}, 4096 slots median: {:?}", times[3]);
+    }
+}
 
 #[test]
 fn allpass_impulse_has_specified_delay_first_tap_and_unit_energy() {

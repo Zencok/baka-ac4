@@ -64,6 +64,10 @@ For custom DSP, `ajoc::reconstruction::Reconstructor` accepts a decorrelation ba
 
 The host owns demuxing, timestamps, source access and playback devices. This library does not provide networking or DRM decryption.
 
+Source after 0.2.1 resolves the decorrelator's fixed 15-band mapping at compile
+time, preserving filter, ducking and PCM arithmetic. See [host measurements and
+validation limits](../../PERFORMANCE.md). Published 0.2.1 predates this change.
+
 ## Supported scope
 
 Supports channel-coded AC-4 with TOC v1/v2, ASF/SSF and A-SPX, and dynamic-only A-JOC 448/1500 kbit/s with a non-alternative presentation. ACPL support is limited.

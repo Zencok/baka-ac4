@@ -18,13 +18,16 @@ pub trait Decorrelation {
     fn reset(&mut self);
 }
 
+pub(super) const PARAMETER_BAND_ENDS_15: [usize; 15] =
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 14, 18, 23, 35, 64];
+
 /// Map a QMF subband to its transmitted A-JOC parameter band.
 pub fn parameter_band(bands: usize, subband: usize) -> Result<usize> {
     let ends: &[usize] = match bands {
         23 => &[
             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 16, 18, 20, 23, 26, 30, 35, 41, 48, 64,
         ],
-        15 => &[1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 14, 18, 23, 35, 64],
+        15 => &PARAMETER_BAND_ENDS_15,
         12 => &[1, 2, 3, 4, 6, 8, 11, 14, 18, 23, 35, 64],
         9 => &[1, 2, 3, 5, 7, 9, 14, 23, 64],
         7 => &[1, 2, 4, 8, 14, 23, 64],
